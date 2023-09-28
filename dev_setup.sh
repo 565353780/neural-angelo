@@ -1,10 +1,9 @@
 cd ..
 git clone git@github.com:565353780/colmap-manage.git
-# git clone --recursive https://github.com/NVlabs/neuralangelo.git na
 git clone https://github.com/NVlabs/neuralangelo.git na
 
 cd colmap-manage
-./setup.sh
+./dev_setup.sh
 
 cd ../na
 

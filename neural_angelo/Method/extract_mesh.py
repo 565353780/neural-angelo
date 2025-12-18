@@ -1,9 +1,6 @@
 import os
-import sys
 from functools import cmp_to_key
 from neural_angelo.Method.cmd import runCMD
-
-sys.path.append('../na/')
 
 def sort_by_id(x, y):
     if x[0] > y[0]:
@@ -54,7 +51,7 @@ def extractMesh(dataset_folder_path, resolution=2048, block_res=128):
         print('\t yaml_file_path:', yaml_file_path)
         return False
 
-    cmd = 'cd ../na && torchrun --nproc_per_node=1 ' + \
+    cmd = 'torchrun --nproc_per_node=1 ' + \
         'projects/neuralangelo/scripts/extract_mesh.py' + \
         ' --config=' + yaml_file_path + \
         ' --checkpoint=' + model_file_path + \

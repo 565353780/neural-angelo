@@ -1,15 +1,25 @@
 cd ..
 git clone https://github.com/565353780/colmap-manage.git
-git clone https://github.com/NVlabs/neuralangelo.git na
+git clone --recursive https://github.com/nvlabs/tiny-cuda-nn
 
 cd colmap-manage
-./setup.sh
+./dev_setup.sh
 
-cd ../na
+pip install torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cu124
 
-pip install gpustat gdown numpy scipy ipython jupyterlab cython ninja diskcache
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install gpustat gdown numpy scipy ipython jupyterlab \
+  cython ninja diskcache
 
-pip install -r requirements.txt
+pip install addict gdown gpustat icecream imageio-ffmpeg \
+  imutils ipdb k3d kornia lpips matplotlib mediapy \
+  nvidia-ml-py3 open3d opencv-python-headless OpenEXR \
+  pathlib pillow plotly pyequilib pyexr PyMCubes \
+  pyquaternion pyyaml requests scikit-image scikit-video \
+  scipy seaborn tensorboard termcolor tqdm trimesh wandb
 
-wandb login
+cd ../tiny-cuda-nn
+cmake . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build --config RelWithDebInfo -j
+cd bindings/torch
+python setup.py install

@@ -1,6 +1,8 @@
+import os
+
 from neural_angelo.Method.extract_mesh import extractMesh
 
-data_folder_path = '../colmap-manage/output/3vjia_simple/na/'
+data_folder_path = os.environ['HOME'] + '/chLi/Dataset/GS/haizei_1/'
 resolution = 2048
 block_res = 128
 

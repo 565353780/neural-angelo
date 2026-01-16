@@ -15,7 +15,7 @@ import json
 import os
 import threading
 import time
-import wandb
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import inspect
 
@@ -225,48 +225,22 @@ class BaseTrainer(object):
         if self.cfg.metrics_epoch is None:
             self.cfg.metrics_epoch = self.cfg.checkpoint.save_epoch
 
-    def init_wandb(self, cfg, wandb_id=None, project="", run_name=None, mode="online", resume="allow", use_group=False):
-        r"""Initialize Weights & Biases (wandb) logger.
+    def init_tensorboard(self, cfg, enabled=True):
+        r"""Initialize TensorBoard logger.
 
         Args:
             cfg (obj): Global configuration.
-            wandb_id (str): A unique ID for this run, used for resuming.
-            project (str): The name of the project where you're sending the new run.
-                If the project is not specified, the run is put in an "Uncategorized" project.
-            run_name (str): name for each wandb run (useful for logging changes)
-            mode (str): online/offline/disabled
+            enabled (bool): Whether to enable TensorBoard logging.
         """
-        if is_master():
-            print('Initialize wandb')
-            if not wandb_id:
-                wandb_path = os.path.join(cfg.logdir, "wandb_id.txt")
-                if self.checkpointer.resume and os.path.exists(wandb_path):
-                    with open(wandb_path, "r") as f:
-                        wandb_id = f.read()
-                else:
-                    wandb_id = wandb.util.generate_id()
-                    with open(wandb_path, "w") as f:
-                        f.write(wandb_id)
-            if use_group:
-                group, name = cfg.logdir.split("/")[-2:]
-            else:
-                group, name = None, os.path.basename(cfg.logdir)
-
-            if run_name is not None:
-                name = run_name
-
-            wandb.init(id=wandb_id,
-                       project=project,
-                       config=cfg,
-                       group=group,
-                       name=name,
-                       dir=cfg.logdir,
-                       resume=resume,
-                       settings=wandb.Settings(start_method="fork"),
-                       mode=mode)
-            wandb.config.update({'dataset': cfg.data.name})
-            if self.model_module is not None:
-                wandb.watch(self.model_module)
+        if is_master() and enabled:
+            print('Initialize TensorBoard')
+            tensorboard_dir = os.path.join(cfg.logdir, "tensorboard")
+            os.makedirs(tensorboard_dir, exist_ok=True)
+            self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_dir)
+            # Log dataset name as a text summary
+            self.tensorboard_writer.add_text('config/dataset', cfg.data.name, 0)
+        else:
+            self.tensorboard_writer = None
 
     def start_of_epoch(self, current_epoch):
         r"""Things to do before an epoch.
@@ -546,9 +520,9 @@ class BaseTrainer(object):
             self.losses[loss_name] = self.losses[loss_name].detach()
 
     def finalize(self, cfg):
-        # Finish the W&B logger.
-        if is_master():
-            wandb.finish()
+        # Finish the TensorBoard logger.
+        if is_master() and hasattr(self, 'tensorboard_writer') and self.tensorboard_writer is not None:
+            self.tensorboard_writer.close()
 
 
 class Checkpointer(object):

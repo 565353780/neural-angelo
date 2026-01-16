@@ -10,7 +10,6 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 -----------------------------------------------------------------------------
 '''
 
-import wandb
 import torch
 import torchvision
 
@@ -18,12 +17,19 @@ from matplotlib import pyplot as plt
 from torchvision.transforms import functional as torchvision_F
 
 
-def wandb_image(images, from_range=(0, 1)):
+def tensorboard_image(images, from_range=(0, 1)):
+    """Convert images to TensorBoard format (torch.Tensor).
+    
+    Args:
+        images: Input images tensor
+        from_range: Range of input values (min, max)
+    
+    Returns:
+        torch.Tensor: Image grid in format suitable for TensorBoard (C, H, W)
+    """
     images = preprocess_image(images, from_range=from_range)
     image_grid = torchvision.utils.make_grid(images, nrow=1, pad_value=1)
-    image_grid = torchvision_F.to_pil_image(image_grid)
-    wandb_image = wandb.Image(image_grid)
-    return wandb_image
+    return image_grid
 
 
 def preprocess_image(images, from_range=(0, 1), cmap="gray"):

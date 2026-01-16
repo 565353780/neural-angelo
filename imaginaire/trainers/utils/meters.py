@@ -12,7 +12,6 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import math
 import torch
-import wandb
 from torch.utils.tensorboard import SummaryWriter
 
 from imaginaire.utils.distributed import master_only, dist_all_reduce_tensor, \
@@ -127,7 +126,6 @@ class Meter(object):
             value = float(sum(filtered_values)) / float(len(filtered_values))
             if is_master():
                 write_summary(self.name, value, step)
-                wandb.log({self.name: value}, step=step)
         self.reset()
 
     @master_only

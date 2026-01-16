@@ -13,8 +13,8 @@ logging_iter: 9999999999999  # disable the printing logger
 
 max_iter: 500000
 
-wandb_scalar_iter: 100
-wandb_image_iter: 1000
+tensorboard_scalar_iter: 100
+tensorboard_image_iter: 1000
 validation_iter: 2000
 
 speed_benchmark: False

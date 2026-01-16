@@ -19,7 +19,6 @@ from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
-import wandb
 
 from imaginaire.utils.distributed import is_master, master_only
 
@@ -286,8 +285,9 @@ def alarm_handler(timeout_period, signum, frame):
     ngc_job_id = os.environ.get('NGC_JOB_ID', None)
     if ngc_job_id is not None:
         error_message += f" Failed NGC job ID: {ngc_job_id}."
-    # Let's reserve `wandb.alert` for this purpose.
-    wandb.alert(title="Timeout error!", text=error_message, level=wandb.AlertLevel.ERROR)
+    # Log timeout error (TensorBoard doesn't have alert functionality)
+    from imaginaire.utils.termcolor import alert
+    alert(error_message)
     exit()
 
 

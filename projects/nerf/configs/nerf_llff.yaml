@@ -12,8 +12,8 @@ _parent_: projects/nerf/configs/nerf_blender.yaml
 
 max_iter: 200000
 
-wandb_scalar_iter: 50
-wandb_image_iter: 500
+tensorboard_scalar_iter: 50
+tensorboard_image_iter: 500
 validation_iter: 1000
 
 model:

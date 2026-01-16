@@ -11,7 +11,6 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 '''
 
 import torch
-import wandb
 from imaginaire.trainers.base import BaseTrainer
 from imaginaire.utils.distributed import is_master, master_only
 from tqdm import tqdm
@@ -28,8 +27,8 @@ class BaseTrainer(BaseTrainer):
         super().__init__(cfg, is_inference=is_inference, seed=seed)
         self.metrics = dict()
         # The below configs should be properly overridden.
-        cfg.setdefault("wandb_scalar_iter", 9999999999999)
-        cfg.setdefault("wandb_image_iter", 9999999999999)
+        cfg.setdefault("tensorboard_scalar_iter", 9999999999999)
+        cfg.setdefault("tensorboard_image_iter", 9999999999999)
         cfg.setdefault("validation_epoch", 9999999999999)
         cfg.setdefault("validation_iter", 9999999999999)
 
@@ -38,13 +37,13 @@ class BaseTrainer(BaseTrainer):
         self.weights = {key: value for key, value in cfg.trainer.loss_weight.items() if value}
 
     def _end_of_iteration(self, data, current_epoch, current_iteration):
-        # Log to wandb.
-        if current_iteration % self.cfg.wandb_scalar_iter == 0:
+        # Log to TensorBoard.
+        if current_iteration % self.cfg.tensorboard_scalar_iter == 0:
             # Compute the elapsed time (as in the original base trainer).
-            self.timer.time_iteration = self.elapsed_iteration_time / self.cfg.wandb_scalar_iter
+            self.timer.time_iteration = self.elapsed_iteration_time / self.cfg.tensorboard_scalar_iter
             self.elapsed_iteration_time = 0
             # Log scalars.
-            self.log_wandb_scalars(data, mode="train")
+            self.log_tensorboard_scalars(data, mode="train")
             # Exit if the training loss has gone to NaN/inf.
             if is_master() and self.losses["total"].isnan():
                 self.finalize(self.cfg)
@@ -52,39 +51,44 @@ class BaseTrainer(BaseTrainer):
             if is_master() and self.losses["total"].isinf():
                 self.finalize(self.cfg)
                 raise ValueError("Training loss has gone to infinity!!!")
-        if current_iteration % self.cfg.wandb_image_iter == 0:
-            self.log_wandb_images(data, mode="train")
+        if current_iteration % self.cfg.tensorboard_image_iter == 0:
+            self.log_tensorboard_images(data, mode="train")
         # Run validation on val set.
         if current_iteration % self.cfg.validation_iter == 0:
             data_all = self.test(self.eval_data_loader, mode="val")
-            # Log the results to W&B.
+            # Log the results to TensorBoard.
             if is_master():
-                self.log_wandb_scalars(data_all, mode="val")
-                self.log_wandb_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+                self.log_tensorboard_scalars(data_all, mode="val")
+                self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
 
     def _end_of_epoch(self, data, current_epoch, current_iteration):
         # Run validation on val set.
         if current_epoch % self.cfg.validation_epoch == 0:
             data_all = self.test(self.eval_data_loader, mode="val")
-            # Log the results to W&B.
+            # Log the results to TensorBoard.
             if is_master():
-                self.log_wandb_scalars(data_all, mode="val")
-                self.log_wandb_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+                self.log_tensorboard_scalars(data_all, mode="val")
+                self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
 
     @master_only
-    def log_wandb_scalars(self, data, mode=None):
-        scalars = dict()
+    def log_tensorboard_scalars(self, data, mode=None):
+        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
+            return
         # Log scalars (basic info & losses).
         if mode == "train":
-            scalars.update({"optim/lr": self.sched.get_last_lr()[0]})
-            scalars.update({"time/iteration": self.timer.time_iteration})
-            scalars.update({"time/epoch": self.timer.time_epoch})
-        scalars.update({f"{mode}/loss/{key}": value for key, value in self.losses.items()})
-        scalars.update(iteration=self.current_iteration, epoch=self.current_epoch)
-        wandb.log(scalars, step=self.current_iteration)
+            self.tensorboard_writer.add_scalar("optim/lr", self.sched.get_last_lr()[0], self.current_iteration)
+            self.tensorboard_writer.add_scalar("time/iteration", self.timer.time_iteration, self.current_iteration)
+            self.tensorboard_writer.add_scalar("time/epoch", self.timer.time_epoch, self.current_iteration)
+        for key, value in self.losses.items():
+            if isinstance(value, torch.Tensor):
+                self.tensorboard_writer.add_scalar(f"{mode}/loss/{key}", value.item() if value.numel() == 1 else value.mean().item(), self.current_iteration)
+            else:
+                self.tensorboard_writer.add_scalar(f"{mode}/loss/{key}", value, self.current_iteration)
+        self.tensorboard_writer.add_scalar("iteration", self.current_iteration, self.current_iteration)
+        self.tensorboard_writer.add_scalar("epoch", self.current_epoch, self.current_iteration)
 
     @master_only
-    def log_wandb_images(self, data, mode=None, max_samples=None):
+    def log_tensorboard_images(self, data, mode=None, max_samples=None):
         trim_test_samples(data, max_samples=max_samples)
 
     def model_forward(self, data):
@@ -107,10 +111,10 @@ class BaseTrainer(BaseTrainer):
              self.current_iteration % self.cfg.validation_iter == 0)):
             # Do an initial validation.
             data_all = self.test(self.eval_data_loader, mode="val", show_pbar=show_pbar)
-            # Log the results to W&B.
+            # Log the results to TensorBoard.
             if is_master():
-                self.log_wandb_scalars(data_all, mode="val")
-                self.log_wandb_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+                self.log_tensorboard_scalars(data_all, mode="val")
+                self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
         # Train.
         super().train(cfg, data_loader, single_gpu, profile, show_pbar)
 

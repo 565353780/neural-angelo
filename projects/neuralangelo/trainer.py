@@ -12,10 +12,9 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import torch
 import torch.nn.functional as torch_F
-import wandb
 
 from imaginaire.utils.distributed import master_only
-from imaginaire.utils.visualization import wandb_image
+from imaginaire.utils.visualization import tensorboard_image
 from projects.nerf.trainers.base import BaseTrainer
 from projects.neuralangelo.utils.misc import get_scheduler, eikonal_loss, curvature_loss
 
@@ -74,36 +73,33 @@ class Trainer(BaseTrainer):
         return super()._start_of_iteration(data, current_iteration)
 
     @master_only
-    def log_wandb_scalars(self, data, mode=None):
-        super().log_wandb_scalars(data, mode=mode)
-        scalars = {
-            f"{mode}/PSNR": self.metrics["psnr"].detach(),
-            f"{mode}/s-var": self.model_module.s_var.item(),
-        }
+    def log_tensorboard_scalars(self, data, mode=None):
+        super().log_tensorboard_scalars(data, mode=mode)
+        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
+            return
+        self.tensorboard_writer.add_scalar(f"{mode}/PSNR", self.metrics["psnr"].detach().item(), self.current_iteration)
+        self.tensorboard_writer.add_scalar(f"{mode}/s-var", self.model_module.s_var.item(), self.current_iteration)
         if "curvature" in self.weights:
-            scalars[f"{mode}/curvature_weight"] = self.weights["curvature"]
+            self.tensorboard_writer.add_scalar(f"{mode}/curvature_weight", self.weights["curvature"], self.current_iteration)
         if "eikonal" in self.weights:
-            scalars[f"{mode}/eikonal_weight"] = self.weights["eikonal"]
+            self.tensorboard_writer.add_scalar(f"{mode}/eikonal_weight", self.weights["eikonal"], self.current_iteration)
         if mode == "train" and self.cfg_gradient.mode == "numerical":
-            scalars[f"{mode}/epsilon"] = self.model.module.neural_sdf.normal_eps
+            self.tensorboard_writer.add_scalar(f"{mode}/epsilon", self.model.module.neural_sdf.normal_eps, self.current_iteration)
         if self.cfg.model.object.sdf.encoding.coarse2fine.enabled:
-            scalars[f"{mode}/active_levels"] = self.model.module.neural_sdf.active_levels
-        wandb.log(scalars, step=self.current_iteration)
+            self.tensorboard_writer.add_scalar(f"{mode}/active_levels", self.model.module.neural_sdf.active_levels, self.current_iteration)
 
     @master_only
-    def log_wandb_images(self, data, mode=None, max_samples=None):
-        images = {"iteration": self.current_iteration, "epoch": self.current_epoch}
+    def log_tensorboard_images(self, data, mode=None, max_samples=None):
+        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
+            return
         if mode == "val":
             images_error = (data["rgb_map"] - data["image"]).abs()
-            images.update({
-                f"{mode}/vis/rgb_target": wandb_image(data["image"]),
-                f"{mode}/vis/rgb_render": wandb_image(data["rgb_map"]),
-                f"{mode}/vis/rgb_error": wandb_image(images_error),
-                f"{mode}/vis/normal": wandb_image(data["normal_map"], from_range=(-1, 1)),
-                f"{mode}/vis/inv_depth": wandb_image(1 / (data["depth_map"] + 1e-8) * self.cfg.trainer.depth_vis_scale),
-                f"{mode}/vis/opacity": wandb_image(data["opacity_map"]),
-            })
-        wandb.log(images, step=self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/vis/rgb_target", tensorboard_image(data["image"]), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/vis/rgb_render", tensorboard_image(data["rgb_map"]), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/vis/rgb_error", tensorboard_image(images_error), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/vis/normal", tensorboard_image(data["normal_map"], from_range=(-1, 1)), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/vis/inv_depth", tensorboard_image(1 / (data["depth_map"] + 1e-8) * self.cfg.trainer.depth_vis_scale), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/vis/opacity", tensorboard_image(data["opacity_map"]), self.current_iteration)
 
     def train(self, cfg, data_loader, single_gpu=False, profile=False, show_pbar=False):
         self.progress = self.model_module.progress = self.current_iteration / self.cfg.max_iter

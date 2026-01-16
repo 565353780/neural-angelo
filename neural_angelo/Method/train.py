@@ -30,7 +30,7 @@ def trainNA(
         print('\t yaml_file_path:', yaml_file_path)
         return False
 
-    output_folder_path = './output/' + sequence_name + '/'
+    output_folder_path = dataset_folder_path + 'output/' + sequence_name + '/'
     if os.path.exists(output_folder_path):
         shutil.rmtree(output_folder_path)
     os.makedirs(output_folder_path, exist_ok=True)
@@ -45,7 +45,7 @@ def trainNA(
         ' torchrun --nproc_per_node=' + nproc_per_node + \
         ' --master_port ' + str(master_port) + \
         ' train.py' + \
-        ' --logdir=' + './logs/' + sequence_name + '/' + \
+        ' --logdir=' + dataset_folder_path + 'logs/' + sequence_name + '/' + \
         ' --config=' + new_yaml_file_path + \
         ' --show_pbar'
 

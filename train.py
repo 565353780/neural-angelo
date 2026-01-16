@@ -34,8 +34,6 @@ def parse_args():
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--profile', action='store_true')
     parser.add_argument('--show_pbar', action='store_true')
-    parser.add_argument('--wandb', action='store_true', help="Enable using Weights & Biases as the logger")
-    parser.add_argument('--wandb_name', default='default', type=str)
     parser.add_argument('--resume', action='store_true')
     args, cfg_cmd = parser.parse_known_args()
     return args, cfg_cmd
@@ -81,12 +79,8 @@ def main():
     trainer.set_data_loader(cfg, split="val")
     trainer.checkpointer.load(args.checkpoint, args.resume, load_sch=True, load_opt=True)
 
-    # Initialize Wandb.
-    trainer.init_wandb(cfg,
-                       project=args.wandb_name,
-                       mode="disabled" if args.debug or not args.wandb else "online",
-                       resume=args.resume,
-                       use_group=True)
+    # Initialize TensorBoard.
+    trainer.init_tensorboard(cfg, enabled=True)
 
     trainer.mode = 'train'
     # Start training.

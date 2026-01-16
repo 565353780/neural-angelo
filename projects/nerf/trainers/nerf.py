@@ -12,12 +12,11 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import torch
 import torch.nn.functional as torch_F
-import wandb
 import skvideo.io
 
 from imaginaire.utils.distributed import master_only
 from projects.nerf.trainers.base import BaseTrainer
-from imaginaire.utils.visualization import wandb_image, preprocess_image
+from imaginaire.utils.visualization import tensorboard_image, preprocess_image
 
 
 class Trainer(BaseTrainer):
@@ -52,34 +51,31 @@ class Trainer(BaseTrainer):
                 self.metrics["psnr_fine"] = -10 * torch_F.mse_loss(data["rgb_map_fine"], data["image"]).log10()
 
     @master_only
-    def log_wandb_scalars(self, data, mode=None):
-        super().log_wandb_scalars(data, mode=mode)
-        scalars = {f"{mode}/PSNR/nerf": self.metrics["psnr"].detach()}
+    def log_tensorboard_scalars(self, data, mode=None):
+        super().log_tensorboard_scalars(data, mode=mode)
+        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
+            return
+        self.tensorboard_writer.add_scalar(f"{mode}/PSNR/nerf", self.metrics["psnr"].detach().item(), self.current_iteration)
         if "render_fine" in self.losses:
-            scalars.update({f"{mode}/PSNR/nerf_fine": self.metrics["psnr_fine"].detach()})
-        wandb.log(scalars, step=self.current_iteration)
+            self.tensorboard_writer.add_scalar(f"{mode}/PSNR/nerf_fine", self.metrics["psnr_fine"].detach().item(), self.current_iteration)
 
     @master_only
-    def log_wandb_images(self, data, mode=None, max_samples=None):
-        super().log_wandb_images(data, mode=mode, max_samples=max_samples)
-        images = {f"{mode}/image_target": wandb_image(data["image"])}
+    def log_tensorboard_images(self, data, mode=None, max_samples=None):
+        super().log_tensorboard_images(data, mode=mode, max_samples=max_samples)
+        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
+            return
+        image_target = tensorboard_image(data["image"])
+        self.tensorboard_writer.add_image(f"{mode}/image_target", image_target, self.current_iteration)
         if mode == "val":
             images_error = (data["rgb_map"] - data["image"]).abs()
-            images.update({
-                f"{mode}/images": wandb_image(data["rgb_map"]),
-                f"{mode}/images_error": wandb_image(images_error),
-                f"{mode}/inv_depth": wandb_image(data["inv_depth_map"]),
-            })
+            self.tensorboard_writer.add_image(f"{mode}/images", tensorboard_image(data["rgb_map"]), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/images_error", tensorboard_image(images_error), self.current_iteration)
+            self.tensorboard_writer.add_image(f"{mode}/inv_depth", tensorboard_image(data["inv_depth_map"]), self.current_iteration)
             if self.cfg.model.fine_sampling:
                 images_error_fine = (data["rgb_map_fine"] - data["image"]).abs()
-                images.update({
-                    f"{mode}/images_fine": wandb_image(data["rgb_map_fine"]),
-                    f"{mode}/images_error_fine": wandb_image(images_error_fine),
-                    f"{mode}/inv_depth_fine": wandb_image(data["inv_depth_map_fine"]),
-                })
-        images.update({"iteration": self.current_iteration})
-        images.update({"epoch": self.current_epoch})
-        wandb.log(images, step=self.current_iteration)
+                self.tensorboard_writer.add_image(f"{mode}/images_fine", tensorboard_image(data["rgb_map_fine"]), self.current_iteration)
+                self.tensorboard_writer.add_image(f"{mode}/images_error_fine", tensorboard_image(images_error_fine), self.current_iteration)
+                self.tensorboard_writer.add_image(f"{mode}/inv_depth_fine", tensorboard_image(data["inv_depth_map_fine"]), self.current_iteration)
 
     def dump_test_results(self, data_all, output_dir):
         results = dict(

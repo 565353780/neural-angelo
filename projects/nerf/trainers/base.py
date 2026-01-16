@@ -51,8 +51,13 @@ class BaseTrainer(BaseTrainer):
             if is_master() and self.losses["total"].isinf():
                 self.finalize(self.cfg)
                 raise ValueError("Training loss has gone to infinity!!!")
+        # Run evaluation to log images to TensorBoard.
         if current_iteration % self.cfg.tensorboard_image_iter == 0:
-            self.log_tensorboard_images(data, mode="train")
+            data_all = self.test(self.eval_data_loader, mode="val")
+            # Log the results to TensorBoard.
+            if is_master():
+                self.log_tensorboard_scalars(data_all, mode="val")
+                self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
         # Run validation on val set.
         if current_iteration % self.cfg.validation_iter == 0:
             data_all = self.test(self.eval_data_loader, mode="val")

@@ -13,12 +13,12 @@ logging_iter: 9999999999999  # disable the printing logger
 max_iter: 500000
 
 tensorboard_scalar_iter: 100
-tensorboard_image_iter: 10000
-validation_iter: 5000
+tensorboard_image_iter: 100
+validation_iter: 1000
 speed_benchmark: False
 
 checkpoint:
-    save_iter: 20000
+    save_iter: 100
 
 trainer:
     type: projects.neuralangelo.trainer

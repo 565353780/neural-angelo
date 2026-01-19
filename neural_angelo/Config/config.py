@@ -1,41 +1,27 @@
 class Config:
     """Neuralangelo 配置类，包含所有超参数
-    
-    所有配置项都已内置默认值，无需用户输入即可运行训练。
     """
-    
+
     # ==================== 基础训练配置 ====================
-    logging_iter: int = 9999999999999  # 禁用打印日志
-    max_iter: int = 500000
-    max_epoch: int = 9999999999  # 最大 epoch 数
-    tensorboard_scalar_iter: int = 100
-    tensorboard_image_iter: int = 100
-    validation_iter: int = 1000
-    validation_epoch: int = 9999999999999  # 禁用基于 epoch 的验证
+    iters_per_epoch: int = 200  # 每个 epoch 的迭代次数
+    max_epoch: int = 2500  # 最大 epoch 数
+
     speed_benchmark: bool = False
     timeout_period: int = 9999999  # 超时时间（秒）
-    
-    # 指标计算频率（如果为 None，则从 checkpoint 配置复制）
-    metrics_iter: int = None
-    metrics_epoch: int = None
-    
+
     # ==================== CUDNN 配置 ====================
     class Cudnn:
         benchmark: bool = True
         deterministic: bool = False
-    
+
     cudnn = Cudnn()
-    
+
     # ==================== 检查点配置 ====================
     class Checkpoint:
-        save_iter: int = 100  # 每 N 次迭代保存检查点
-        save_epoch: int = 9999999999  # 每 N 个 epoch 保存检查点
-        save_latest_iter: int = 200  # 每 N 次迭代保存 latest_checkpoint.pt
-        save_period: int = 9999999999  # 基于时间的保存周期（分钟）
         strict_resume: bool = True  # 严格模式加载 state_dict
-    
+
     checkpoint = Checkpoint()
-    
+
     # ==================== 训练器配置 ====================
     class Trainer:
         depth_vis_scale: float = 0.5
@@ -53,15 +39,15 @@ class Config:
             render: float = 1.0
             eikonal: float = 0.1
             curvature: float = 5e-4
-        
+
         loss_weight = LossWeight()
-        
+
         class Init:
             type: str = "none"
             gain: float = None
-        
+
         init = Init()
-        
+
         class AMPConfig:
             enabled: bool = False
             dtype: str = "float16"  # float16 或 bfloat16
@@ -69,9 +55,9 @@ class Config:
             growth_factor: float = 2.0
             backoff_factor: float = 0.5
             growth_interval: int = 2000
-        
+
         amp_config = AMPConfig()
-    
+
     trainer = Trainer()
     
     # ==================== 模型配置 ====================
@@ -260,7 +246,7 @@ class Config:
 
     # 动态属性（在运行时设置）
     logdir = None
-    
+
     def setdefault(self, key: str, value):
         """设置默认值，如果属性不存在则创建"""
         if not hasattr(self, key):

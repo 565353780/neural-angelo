@@ -13,7 +13,6 @@ from torch.utils.tensorboard import SummaryWriter
 from neural_angelo.Util.init_weight import weights_init, weights_rescale
 from neural_angelo.Util.model_average import ModelAverage
 from neural_angelo.Util.misc import to_cuda, requires_grad, Timer
-from neural_angelo.Util.set_random_seed import set_random_seed
 from neural_angelo.Util.visualization import tensorboard_image
 from neural_angelo.Util.nerf_misc import eikonal_loss, curvature_loss
 
@@ -21,6 +20,16 @@ from neural_angelo.Dataset.dataloader import get_train_dataloader, get_val_datal
 from neural_angelo.Model.model import Model
 from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Module.checkpointer import Checkpointer
+
+
+def cycle_dataloader(data_loader):
+    """创建一个无限循环的数据迭代器，确保数据按顺序循环获取。
+    
+    每次 data_loader 耗尽时，重新从头开始迭代，保证所有图片都被均匀使用。
+    """
+    while True:
+        for data in data_loader:
+            yield data
 
 
 def _calculate_model_size(model):
@@ -55,18 +64,20 @@ def trim_test_samples(data, max_samples=None):
 
 class Trainer(object):
     r"""Trainer class for Neuralangelo training.
+    
+    训练循环基于 epoch，每个 epoch 包含 cfg.iters_per_epoch 次迭代。
+    所有保存、验证、日志记录操作都在 epoch 结束时统一进行。
 
     Args:
         cfg (obj): Global configuration.
         is_inference (bool): if True, load the test dataloader and run in inference mode.
-        seed (int): Random seed.
     """
 
-    def __init__(self, cfg, is_inference=True, seed=0):
+    def __init__(self, cfg, is_inference=True):
         print('Setup trainer.')
         self.cfg = cfg
         # Create objects for the networks, optimizers, and schedulers.
-        self.model = self.setup_model(cfg, seed=seed)
+        self.model = self.setup_model(cfg)
         if not is_inference:
             self.optim = self.setup_optimizer(cfg, self.model)
             self.sched = self.setup_scheduler(cfg, self.optim)
@@ -100,11 +111,9 @@ class Trainer(object):
 
         # Trainer-specific initialization
         self.metrics = dict()
-        # The below configs should be properly overridden.
-        cfg.setdefault("tensorboard_scalar_iter", 9999999999999)
-        cfg.setdefault("tensorboard_image_iter", 9999999999999)
-        cfg.setdefault("validation_epoch", 9999999999999)
-        cfg.setdefault("validation_iter", 9999999999999)
+        
+        # 每个 epoch 的迭代次数
+        self.iters_per_epoch = cfg.iters_per_epoch
 
         self.warm_up_end = cfg.optim.sched.warm_up_end
         self.cfg_gradient = cfg.model.object.sdf.gradient
@@ -117,33 +126,28 @@ class Trainer(object):
         self.mode = 'train'
         return
 
-    def set_data_loader(self, cfg, split, shuffle=True, drop_last=True, seed=0):
+    def set_data_loader(self, cfg, split, shuffle=True):
         """Set the data loader corresponding to the indicated split.
         Args:
             split (str): Must be either 'train', 'val', or 'test'.
             shuffle (bool): Whether to shuffle the data (only applies to the training set).
-            drop_last (bool): Whether to drop the last batch if it is not full (only applies to the training set).
-            seed (int): Random seed.
         """
         assert (split in ["train", "val", "test"])
         if split == "train":
-            self.train_data_loader = get_train_dataloader(cfg, shuffle=shuffle, drop_last=drop_last, seed=seed)
+            self.train_data_loader = get_train_dataloader(cfg, shuffle=shuffle)
         elif split == "val":
-            self.eval_data_loader = get_val_dataloader(cfg, seed=seed)
+            self.eval_data_loader = get_val_dataloader(cfg)
 
-    def setup_model(self, cfg, seed=0):
-        r"""Return the networks. We will first set the random seed to a fixed value so that the network will be
-        initialized with consistent weights. After this we will wrap the network with a moving average model if applicable.
+    def setup_model(self, cfg):
+        r"""Return the networks.
+        will wrap the network with a moving average model if applicable.
 
         The following objects are constructed as class members:
           - model (obj): Model object (historically: generator network object).
 
         Args:
             cfg (obj): Global configuration.
-            seed (int): Random seed.
         """
-        # 设置随机种子以确保初始化一致性
-        set_random_seed(seed)
         # Construct networks
         model = Model(cfg.model, cfg.data)
         print('model parameter count: {:,}'.format(_calculate_model_size(model)))
@@ -281,49 +285,71 @@ class Trainer(object):
         self.start_iteration_time = time.time()
         return data
 
-    def end_of_iteration(self, data, current_epoch, current_iteration):
-        r"""Things to do after an iteration.
+    def end_of_iteration(self, current_iteration):
+        r"""Things to do after each iteration (minimal operations).
 
         Args:
-            data (dict): Data used for the current iteration.
-            current_epoch (int): Current number of epoch.
             current_iteration (int): Current number of iteration.
         """
         self.current_iteration = current_iteration
-        self.current_epoch = current_epoch
         self.elapsed_iteration_time += time.time() - self.start_iteration_time
-
-        # Logging
-        if current_iteration % self.cfg.logging_iter == 0:
-            avg_time = self.elapsed_iteration_time / self.cfg.logging_iter
-            self.timer.time_iteration = avg_time
-            print('Iteration: {}, average iter time: {:6f}.'.format(current_iteration, avg_time))
-            self.elapsed_iteration_time = 0
-            if self.cfg.speed_benchmark:
-                self.timer._print_speed_benchmark(avg_time)
-
-        self._end_of_iteration(data, current_epoch, current_iteration)
-
-        # 保存 model_last.pt（每隔一定迭代次数保存一次）
-        if current_iteration % self.cfg.checkpoint.save_iter == 0 or current_iteration == self.cfg.max_iter:
-            self.checkpointer.save(self.checkpoint_path_last, current_epoch, current_iteration)
-
+        # 每次迭代后更新 scheduler（iteration mode）
         if self.cfg.optim.sched.iteration_mode:
             self.sched.step()
 
     def end_of_epoch(self, data, current_epoch, current_iteration):
-        r"""Things to do after an epoch."""
+        r"""Things to do after an epoch.
+        
+        所有的验证、保存、日志记录操作都在这里统一进行。
+
+        Args:
+            data (dict): Data used for the last iteration in the epoch.
+            current_epoch (int): Current number of epoch.
+            current_iteration (int): Current total iteration count.
+        """
+        self.current_epoch = current_epoch
+        self.current_iteration = current_iteration
+        
+        # 更新 scheduler（epoch mode）
         if not self.cfg.optim.sched.iteration_mode:
             self.sched.step()
+        
         elapsed_epoch_time = time.time() - self.start_epoch_time
-        print('Epoch: {}, total time: {:6f}.'.format(current_epoch, elapsed_epoch_time))
         self.timer.time_epoch = elapsed_epoch_time
-        self._end_of_epoch(data, current_epoch, current_iteration)
+        
+        # 计算平均迭代时间
+        avg_time = self.elapsed_iteration_time / self.iters_per_epoch
+        self.timer.time_iteration = avg_time
+        self.elapsed_iteration_time = 0
+
+        # 日志打印
+        print(f'Epoch: {current_epoch}, iter: {current_iteration}, '
+                f'epoch time: {elapsed_epoch_time:.2f}s, avg iter time: {avg_time:.4f}s')
+        if self.cfg.speed_benchmark:
+            self.timer._print_speed_benchmark(avg_time)
+
+        # TensorBoard scalar 记录
+        self.log_tensorboard_scalars(data, mode="train")
+        # Exit if the training loss has gone to NaN/inf.
+        if self.losses["total"].isnan() or self.losses["total"].isinf():
+            self.finalize(self.cfg)
+            raise ValueError("Training loss has gone to NaN or infinity!!!")
+
+        # 验证和 TensorBoard 图像记录
+        data_all = self.test(self.eval_data_loader, mode="val")
+        self.log_tensorboard_scalars(data_all, mode="val")
+        self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+        # 判断是否为最佳模型并保存
+        self._save_best_model_if_needed(current_epoch, current_iteration)
+
+        # 保存 model_last.pt
+        self.checkpointer.save(self.checkpoint_path_last, current_epoch, current_iteration)
 
     def _update_progress(self, current_iteration):
         r"""Update training progress and model parameters."""
         model = self.model_module
-        self.progress = model.progress = current_iteration / self.cfg.max_iter
+        max_iter = self.cfg.max_epoch * self.iters_per_epoch
+        self.progress = model.progress = current_iteration / max_iter
         if self.cfg.model.object.sdf.encoding.coarse2fine.enabled:
             model.neural_sdf.set_active_levels(current_iteration)
             if self.cfg_gradient.mode == "numerical":
@@ -331,50 +357,6 @@ class Trainer(object):
                 self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
         elif self.cfg_gradient.mode == "numerical":
             model.neural_sdf.set_normal_epsilon()
-
-    def _end_of_iteration(self, data, current_epoch, current_iteration):
-        r"""Operations to do after an iteration.
-
-        Args:
-            data (dict): Data used for the current iteration.
-            current_epoch (int): Current number of epoch.
-            current_iteration (int): Current epoch number.
-        """
-        # Log to TensorBoard.
-        if current_iteration % self.cfg.tensorboard_scalar_iter == 0:
-            self.timer.time_iteration = self.elapsed_iteration_time / self.cfg.tensorboard_scalar_iter
-            self.elapsed_iteration_time = 0
-            self.log_tensorboard_scalars(data, mode="train")
-            # Exit if the training loss has gone to NaN/inf.
-            if self.losses["total"].isnan() or self.losses["total"].isinf():
-                self.finalize(self.cfg)
-                raise ValueError("Training loss has gone to NaN or infinity!!!")
-        # Run validation (merge tensorboard_image_iter and validation_iter checks)
-        should_validate = (current_iteration % self.cfg.tensorboard_image_iter == 0 or
-                           current_iteration % self.cfg.validation_iter == 0)
-        if should_validate:
-            data_all = self.test(self.eval_data_loader, mode="val")
-            self.log_tensorboard_scalars(data_all, mode="val")
-            self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
-            # 判断是否为最佳模型并保存
-            self._save_best_model_if_needed(current_epoch, current_iteration)
-
-    def _end_of_epoch(self, data, current_epoch, current_iteration):
-        r"""Operations to do after an epoch.
-
-        Args:
-            data (dict): Data used for the current iteration.
-            current_epoch (int): Current number of epoch.
-            current_iteration (int): Current epoch number.
-        """
-        # Run validation on val set.
-        if current_epoch % self.cfg.validation_epoch == 0:
-            data_all = self.test(self.eval_data_loader, mode="val")
-            # Log the results to TensorBoard.
-            self.log_tensorboard_scalars(data_all, mode="val")
-            self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
-            # 判断是否为最佳模型并保存
-            self._save_best_model_if_needed(current_epoch, current_iteration)
 
     def _save_best_model_if_needed(self, current_epoch, current_iteration):
         """根据PSNR判断是否保存最佳模型。"""
@@ -438,40 +420,55 @@ class Trainer(object):
         return total_loss
 
     def train(self, cfg, data_loader):
+        """训练主循环。
+
+        使用基于 epoch 的训练方式，每个 epoch 包含 iters_per_epoch 次迭代。
+        数据通过循环迭代器按顺序获取，确保所有图片都被均匀使用。
+        """
         # Resume from checkpoint if available
         start_epoch = self.checkpointer.resume_epoch or self.current_epoch
         current_iteration = self.checkpointer.resume_iteration or self.current_iteration
         self.current_epoch = start_epoch
         self.current_iteration = current_iteration
-        self.progress = self.model_module.progress = current_iteration / self.cfg.max_iter
+        max_iter = cfg.max_epoch * self.iters_per_epoch
+        self.progress = self.model_module.progress = current_iteration / max_iter
 
         # Initial validation
-        if (start_epoch % self.cfg.validation_epoch == 0 or
-            current_iteration % self.cfg.validation_iter == 0):
-            data_all = self.test(self.eval_data_loader, mode="val")
-            self.log_tensorboard_scalars(data_all, mode="val")
-            self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
-            # 判断是否为最佳模型并保存
-            self._save_best_model_if_needed(start_epoch, current_iteration)
+        data_all = self.test(self.eval_data_loader, mode="val")
+        self.log_tensorboard_scalars(data_all, mode="val")
+        self.log_tensorboard_images(data_all, mode="val", max_samples=cfg.data.val.max_viz_samples)
+        self._save_best_model_if_needed(start_epoch, current_iteration)
+
+        # 创建循环数据迭代器，确保数据按顺序循环获取
+        data_iter = cycle_dataloader(data_loader)
+
         for current_epoch in range(start_epoch, cfg.max_epoch):
             self.start_of_epoch(current_epoch)
-            data_loader_wrapper = tqdm(data_loader, desc=f"Training epoch {current_epoch + 1}", leave=False)
-            for it, data in enumerate(data_loader_wrapper):
+
+            # 使用 tqdm 显示 epoch 内的迭代进度
+            epoch_pbar = tqdm(range(self.iters_per_epoch), 
+                            desc=f"Epoch {current_epoch + 1}/{cfg.max_epoch}", 
+                            leave=False)
+
+            for it in epoch_pbar:
+                # 从循环迭代器获取下一批数据
+                data = next(data_iter)
                 data = self.start_of_iteration(data, current_iteration)
 
-                self.train_step(data, last_iter_in_epoch=(it == len(data_loader) - 1))
+                # 判断是否是 epoch 最后一次迭代（用于梯度累积）
+                last_iter_in_epoch = (it == self.iters_per_epoch - 1)
+                self.train_step(data, last_iter_in_epoch=last_iter_in_epoch)
 
                 current_iteration += 1
-                data_loader_wrapper.set_postfix(iter=current_iteration)
-                if it == len(data_loader) - 1:
-                    self.end_of_iteration(data, current_epoch + 1, current_iteration)
-                else:
-                    self.end_of_iteration(data, current_epoch, current_iteration)
-                if current_iteration >= cfg.max_iter:
-                    print('Done with training!!!')
-                    return
+                epoch_pbar.set_postfix(iter=current_iteration, loss=f"{self.losses['total'].item():.4f}")
 
+                self.end_of_iteration(current_iteration)
+
+            # Epoch 结束时执行所有操作（验证、保存、日志）
             self.end_of_epoch(data, current_epoch + 1, current_iteration)
+
+        # 训练结束，保存最终模型
+        self.checkpointer.save(self.checkpoint_path_last, cfg.max_epoch, current_iteration)
         print('Done with training!!!')
 
     @torch.no_grad()

@@ -25,12 +25,8 @@ def demo():
 
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
 
-    # 检查点路径（如果文件存在则自动恢复训练，否则从头训练）
-    checkpoint = data_folder + "na/logs/latest_checkpoint.pt"
+    checkpoint = data_folder + "na/logs/model_last.pt"
 
-    seed = 0
-
-    # 获取配置
     cfg = Config()
 
     # 设置日志目录
@@ -39,8 +35,7 @@ def demo():
     cfg.data.num_images = len(os.listdir(cfg.data.root + 'images/'))
 
     # 设置随机种子
-    set_random_seed(seed)
-    print(f"随机种子: {seed}")
+    set_random_seed(0)
 
     # 初始化 cuDNN
     init_cudnn(deterministic=False, benchmark=True)
@@ -48,21 +43,20 @@ def demo():
     # 打印关键配置
     print("\n关键配置:")
     print(f"  - 数据集路径: {cfg.data.root}")
-    print(f"  - 最大迭代次数: {cfg.max_iter}")
+    print(f"  - 每轮迭代次数: {cfg.iters_per_epoch}")
+    print(f"  - 最大迭代轮数: {cfg.max_epoch}")
     print(f"  - 训练批量大小: {cfg.data.train.batch_size}")
     print(f"  - 学习率: {cfg.optim.params.lr}")
-    print(f"  - 保存检查点间隔: {cfg.checkpoint.save_iter}")
-    print(f"  - TensorBoard 记录间隔: {cfg.tensorboard_scalar_iter}")
     print()
 
     # 初始化训练器
     print("初始化训练器...")
-    trainer = Trainer(cfg, is_inference=False, seed=seed)
+    trainer = Trainer(cfg, is_inference=False)
 
     # 设置数据加载器
     print("设置数据加载器...")
-    trainer.set_data_loader(cfg, split="train", seed=seed)
-    trainer.set_data_loader(cfg, split="val", seed=seed)
+    trainer.set_data_loader(cfg, split="train")
+    trainer.set_data_loader(cfg, split="val")
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
     print("加载检查点...")

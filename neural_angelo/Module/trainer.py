@@ -44,13 +44,28 @@ def _calculate_model_size(model):
 
 
 def collate_test_data_batches(data_batches):
-    """将多个测试数据批次合并为一个字典。"""
+    """将多个测试数据批次合并为一个字典。
+    
+    对于尺寸一致的 tensor，使用 torch.cat 合并；
+    对于尺寸不一致的 tensor（如不同分辨率的图像），保留为 list。
+    """
     if not data_batches:
         return {}
     data_all = {}
     for key in data_batches[0].keys():
         if isinstance(data_batches[0][key], torch.Tensor):
-            data_all[key] = torch.cat([batch[key] for batch in data_batches], dim=0)
+            tensors = [batch[key] for batch in data_batches if key in batch and batch[key] is not None]
+            if not tensors:
+                data_all[key] = None
+                continue
+            # 检查除 dim=0 外其他维度是否一致
+            first_shape = tensors[0].shape[1:]
+            all_same_shape = all(t.shape[1:] == first_shape for t in tensors)
+            if all_same_shape:
+                data_all[key] = torch.cat(tensors, dim=0)
+            else:
+                # 尺寸不一致，保留为 list
+                data_all[key] = tensors
         elif isinstance(data_batches[0][key], (list, tuple)):
             data_all[key] = [item for batch in data_batches for item in batch[key]]
         else:
@@ -328,6 +343,10 @@ class Trainer(object):
 
         model.neural_sdf.set_normal_epsilon()
         self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
+        
+        # 更新 nerfacc OccupancyGrid (仅在训练模式下)
+        if hasattr(model, 'update_occupancy_grid') and model.training:
+            model.update_occupancy_grid(current_iteration)
 
     def _save_best_model_if_needed(self, current_epoch, current_iteration):
         """根据PSNR判断是否保存最佳模型。"""
@@ -473,7 +492,10 @@ class Trainer(object):
     def _detach_losses(self):
         r"""Detach all logging variables to prevent potential memory leak."""
         for loss_name in self.losses:
-            self.losses[loss_name] = self.losses[loss_name].detach()
+            loss_val = self.losses[loss_name]
+            if isinstance(loss_val, torch.Tensor):
+                self.losses[loss_name] = loss_val.detach()
+            # 如果是 float/int 等非 tensor 类型，保持原样
 
     def finalize(self):
         # Finish the TensorBoard logger.
@@ -509,8 +531,21 @@ class Trainer(object):
                 self.losses["curvature"] = curvature_loss(data["hessians"], outside=data["outside"])
         else:
             # Compute loss on the entire image.
-            self.losses["render"] = self.criteria["render"](data["rgb_map"], data["image"])
-            self.metrics["psnr"] = -10 * torch_F.mse_loss(data["rgb_map"], data["image"]).log10()
+            rgb_map = data["rgb_map"]
+            image = data["image"]
+            # 处理不同尺寸的图像（保存为 list 的情况）
+            if isinstance(rgb_map, list) and isinstance(image, list):
+                # 逐图像计算 loss 然后取平均
+                losses = []
+                psnrs = []
+                for rgb_pred, rgb_gt in zip(rgb_map, image):
+                    losses.append(self.criteria["render"](rgb_pred, rgb_gt))
+                    psnrs.append(-10 * torch_F.mse_loss(rgb_pred, rgb_gt).log10())
+                self.losses["render"] = torch.stack(losses).mean()
+                self.metrics["psnr"] = torch.stack(psnrs).mean()
+            else:
+                self.losses["render"] = self.criteria["render"](rgb_map, image)
+                self.metrics["psnr"] = -10 * torch_F.mse_loss(rgb_map, image).log10()
 
     def get_curvature_weight(self, current_iteration, init_weight):
         if "curvature" in self.weights:
@@ -543,6 +578,15 @@ class Trainer(object):
         if mode == "train":
             self.tensorboard_writer.add_scalar(f"{mode}/epsilon", self.model_module.neural_sdf.normal_eps, self.current_iteration)
         self.tensorboard_writer.add_scalar(f"{mode}/active_levels", self.model_module.neural_sdf.active_levels, self.current_iteration)
+        
+        # NerfAcc 统计
+        if hasattr(self.model_module, 'use_nerfacc') and self.model_module.use_nerfacc:
+            self.tensorboard_writer.add_scalar(f"{mode}/nerfacc_enabled", 1, self.current_iteration)
+            if hasattr(self.model_module, 'estimator') and self.model_module.estimator is not None:
+                # 记录占据网格的占用率
+                if hasattr(self.model_module.estimator.estimator, 'occs'):
+                    occ_rate = (self.model_module.estimator.estimator.occs > 0).float().mean().item()
+                    self.tensorboard_writer.add_scalar(f"{mode}/occ_grid_rate", occ_rate, self.current_iteration)
 
     def log_tensorboard_images(self, data, mode=None, max_samples=None):
         trim_test_samples(data, max_samples=max_samples)

@@ -27,7 +27,7 @@ def demo():
 
     cfg = Config()
     device = 'cuda:1'
-    extract_mesh_only = True
+    extract_mesh_only = False
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/"

@@ -19,6 +19,9 @@ pip install addict gdown gpustat icecream imageio-ffmpeg \
   scipy seaborn tensorboard termcolor tqdm trimesh wandb \
   warp-lang
 
+# 安装 nerfacc (最新版本 >= 0.5.3 以获得最佳性能)
+pip install nerfacc>=0.5.3
+
 cd ../tiny-cuda-nn
 cmake . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build --config RelWithDebInfo -j

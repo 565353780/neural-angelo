@@ -1,6 +1,9 @@
 import os
 import torch
+import trimesh
 import inspect
+import warp as wp
+import numpy as np
 import torch.nn.functional as torch_F
 
 from tqdm import tqdm
@@ -17,10 +20,60 @@ from neural_angelo.Dataset.dataloader import get_train_dataloader, get_val_datal
 from neural_angelo.Model.model import Model
 from neural_angelo.Loss.eikonal import eikonal_loss
 from neural_angelo.Loss.curvature import curvature_loss
+from neural_angelo.Method.io import loadMeshFile
 from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Method.cudnn import init_cudnn
 from neural_angelo.Module.checkpointer import Checkpointer
 from neural_angelo.Module.model_average import ModelAverage
+
+
+# 1. 初始化 Warp
+wp.init()
+
+@wp.kernel
+def compute_sdf_kernel(
+    mesh: wp.uint64,                 # Mesh 句柄
+    query_points: wp.array(dtype=wp.vec3),
+    out_sdf: wp.array(dtype=float),
+    out_gradients: wp.array(dtype=wp.vec3)  # 可选：SDF 梯度（即方向）
+):
+    tid = wp.tid()
+    p = query_points[tid]
+
+    # max_dist 设置为一个足够大的数
+    # MeshQueryPoint 包含: result, face, u, v, sign
+    query_res = wp.mesh_query_point(mesh, p, 1.0e6)
+
+    if query_res.result:
+        # 使用重心坐标计算最近点位置
+        face_idx = query_res.face
+        u = query_res.u
+        v = query_res.v
+        closest_p = wp.mesh_eval_position(mesh, face_idx, u, v)
+
+        # 计算距离 (Unsigned)
+        dist = wp.length(p - closest_p)
+
+        # 使用 query_res.sign 直接获取符号（正数表示外部，负数表示内部）
+        sdf_val = query_res.sign * dist
+
+        out_sdf[tid] = sdf_val
+
+        # 计算方向向量
+        diff = p - closest_p
+
+        # 计算梯度（SDF 的导数就是指向表面的单位向量）
+        if dist > 1e-6:
+            out_gradients[tid] = wp.normalize(diff)
+        else:
+            # 在表面上直接使用法线
+            normal = wp.mesh_eval_face_normal(mesh, face_idx)
+            out_gradients[tid] = normal
+
+    else:
+        # 如果超出 max_dist
+        out_sdf[tid] = 1.0e6
+        out_gradients[tid] = wp.vec3(0.0, 0.0, 0.0)
 
 
 def cycle_dataloader(data_loader):
@@ -73,12 +126,13 @@ class Trainer(object):
         cfg (obj): Global configuration.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, device: str='cuda:0'):
         print('Setup trainer.')
         # 初始化 cuDNN
         init_cudnn(deterministic=False, benchmark=True)
 
         self.cfg = cfg
+        self.device = device
 
         # Create objects for the networks, optimizers, and schedulers.
         self.model = self.setup_model()
@@ -139,7 +193,7 @@ class Trainer(object):
         init_gain = self.cfg.trainer.init.gain or 1.
         model.apply(weights_init(self.cfg.trainer.init.type, init_gain, init_bias))
         model.apply(weights_rescale())
-        model = model.to('cuda')
+        model = model.to(self.device)
         return model
 
     def setup_optimizer(self, model):
@@ -240,6 +294,255 @@ class Trainer(object):
         os.makedirs(tensorboard_dir, exist_ok=True)
         self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_dir)
         return True
+
+    def fitMeshSDF(
+        self,
+        mesh: trimesh.Trimesh,
+        sample_point_num: int = 8192,
+        lr: float = 1e-4,
+        log_interval: int = 100,
+        patience: int = 50,
+        min_delta: float = 1e-6,
+        max_epochs_per_level: int = 500,
+    ) -> bool:
+        """使用自适应coarse-to-fine策略训练NeuralSDF网络拟合三角网格的SDF场。
+
+        自适应策略：从初始level开始拟合，当loss连续patience个epoch不再下降时，
+        自动增加level，直到最深层级拟合完毕。
+
+        Args:
+            mesh (trimesh.Trimesh): 输入的三角网格对象。
+            sample_point_num (int): 每轮采样的点数，默认8192。
+            lr (float): 学习率，默认1e-4。
+            log_interval (int): 日志打印间隔，默认100。
+            patience (int): 连续多少个epoch loss不下降则增加层级，默认50。
+            min_delta (float): 判断loss下降的最小阈值，默认1e-6。
+            max_epochs_per_level (int): 每个层级最多训练的epoch数，防止卡住，默认500。
+
+        Returns:
+            bool: 训练是否成功。
+        """
+        # 将 PyTorch 设备转换为 Warp 设备格式（字符串）
+        warp_device = str(self.device) if not isinstance(self.device, str) else self.device
+
+        # 创建 Warp Mesh 对象 (注意：points 需要 dtype=wp.vec3，indices 需要扁平化)
+        wp_mesh = wp.Mesh(
+            points=wp.array(mesh.vertices.astype(np.float32), dtype=wp.vec3, device=warp_device),
+            indices=wp.array(mesh.faces.flatten().astype(np.int32), device=warp_device)
+        )
+
+        # 获取 mesh 的边界盒，用于采样点的范围
+        bbox_min = mesh.bounds[0]
+        bbox_max = mesh.bounds[1]
+        bbox_center = (bbox_min + bbox_max) / 2.0
+        bbox_extent = (bbox_max - bbox_min).max() / 2.0 * 1.2  # 扩展 20% 边界
+
+        def sample_sdf_with_warp(num_points: int) -> tuple:
+            """使用 Warp 查询采样点的 SDF 值。
+
+            采样策略：
+            - 50% 点在表面附近采样（使用 mesh 表面采样 + 扰动）
+            - 50% 点在边界盒内均匀采样
+
+            Args:
+                num_points: 采样点数量
+
+            Returns:
+                points_np: 采样点坐标 [N, 3]
+                sdf_np: SDF 值 [N]
+            """
+            # 表面附近采样
+            near_surface_num = num_points // 2
+            surface_points = mesh.sample(near_surface_num)
+            # 添加高斯噪声，标准差为边界盒大小的 1-5%
+            noise_std = np.random.uniform(0.01, 0.05) * bbox_extent
+            near_surface_points = surface_points + np.random.randn(near_surface_num, 3) * noise_std
+
+            # 边界盒内均匀采样
+            uniform_num = num_points - near_surface_num
+            uniform_points = (np.random.rand(uniform_num, 3) - 0.5) * 2.0 * bbox_extent + bbox_center
+
+            # 合并采样点
+            query_points_np = np.vstack([near_surface_points, uniform_points]).astype(np.float32)
+
+            # 使用 Warp 查询 SDF
+            query_points_wp = wp.array(query_points_np, dtype=wp.vec3, device=warp_device)
+            out_sdf_wp = wp.zeros(num_points, dtype=float, device=warp_device)
+            out_grad_wp = wp.zeros(num_points, dtype=wp.vec3, device=warp_device)
+
+            wp.launch(
+                kernel=compute_sdf_kernel,
+                dim=num_points,
+                inputs=[wp_mesh.id, query_points_wp, out_sdf_wp, out_grad_wp],
+                device=warp_device
+            )
+
+            wp.synchronize_device(warp_device)
+
+            sdf_np = out_sdf_wp.numpy()
+            return query_points_np, sdf_np
+
+        # 获取NeuralSDF模块和coarse2fine配置
+        neural_sdf = self.model_module.neural_sdf
+        cfg_c2f = self.cfg.model.object.sdf.encoding.coarse2fine
+        total_levels = self.cfg.model.object.sdf.encoding.levels
+        init_active_level = cfg_c2f.init_active_level
+
+        print('[INFO][Trainer::fitMeshSDF]')
+        print(f'\t Adaptive Coarse-to-fine SDF fitting:')
+        print(f'\t   - init_active_level: {init_active_level}')
+        print(f'\t   - total_levels: {total_levels}')
+        print(f'\t   - patience: {patience}')
+        print(f'\t   - min_delta: {min_delta}')
+        print(f'\t   - max_epochs_per_level: {max_epochs_per_level}')
+        print(f'\t   - sample_point_num: {sample_point_num}')
+
+        # 设置初始active levels（从低分辨率开始）
+        neural_sdf.active_levels = init_active_level
+        neural_sdf.anneal_levels = init_active_level
+        neural_sdf.set_normal_epsilon()
+
+        # 创建专用的优化器，只优化NeuralSDF的参数
+        sdf_optimizer = AdamW(
+            params=neural_sdf.parameters(),
+            lr=lr,
+            weight_decay=1e-6,
+        )
+
+        # 定义损失函数
+        sdf_loss_fn = torch.nn.L1Loss()
+
+        # 训练状态变量
+        neural_sdf.train()
+        current_level = init_active_level
+        total_epoch = 0
+
+        # 逐层训练
+        while current_level <= total_levels:
+            print(f'\n[INFO] Training level {current_level}/{total_levels}')
+
+            # 设置当前层级
+            neural_sdf.active_levels = current_level
+            neural_sdf.anneal_levels = current_level
+            neural_sdf.set_normal_epsilon()
+
+            # 当前层级的训练状态
+            best_loss = float('inf')
+            epochs_without_improvement = 0
+            level_epoch = 0
+            
+            pbar = tqdm(desc=f"Level {current_level}/{total_levels}", leave=False)
+            
+            while epochs_without_improvement < patience and level_epoch < max_epochs_per_level:
+                # 每轮使用 Warp 重新采样点和 SDF 值
+                points_np, sdf_np = sample_sdf_with_warp(sample_point_num)
+
+                # 转换为tensor并移动到指定设备
+                points = torch.from_numpy(points_np).float().to(self.device)  # [N, 3]
+                sdf_gt = torch.from_numpy(sdf_np).float().to(self.device)  # [N]
+
+                # 前向传播：预测SDF值
+                sdf_pred, _ = neural_sdf.forward(points, with_sdf=True, with_feat=False)  # [N, 1]
+                sdf_pred = sdf_pred.squeeze(-1)  # [N]
+
+                # 计算SDF损失
+                loss_sdf = sdf_loss_fn(sdf_pred, sdf_gt)
+
+                # 计算Eikonal损失（约束梯度长度为1）
+                gradients, _ = neural_sdf.compute_gradients(points, training=False)  # [N, 3]
+                grad_norm = gradients.norm(dim=-1)  # [N]
+                loss_eikonal = ((grad_norm - 1.0) ** 2).mean()
+
+                # 总损失
+                total_loss = loss_sdf + 0.1 * loss_eikonal
+                current_loss = total_loss.item()
+
+                # 反向传播
+                sdf_optimizer.zero_grad()
+                total_loss.backward()
+                sdf_optimizer.step()
+
+                # 检查是否有改进
+                if current_loss < best_loss - min_delta:
+                    best_loss = current_loss
+                    epochs_without_improvement = 0
+                else:
+                    epochs_without_improvement += 1
+
+                # 更新进度条
+                pbar.update(1)
+                pbar.set_postfix(
+                    epoch=level_epoch,
+                    loss=f"{current_loss:.6f}",
+                    best=f"{best_loss:.6f}",
+                    no_improve=epochs_without_improvement
+                )
+
+                # 日志打印
+                if (level_epoch + 1) % log_interval == 0:
+                    print(f'\t level {current_level}, epoch {level_epoch + 1}: '
+                          f'loss={current_loss:.6f}, best={best_loss:.6f}, '
+                          f'no_improve={epochs_without_improvement}/{patience}')
+
+                    # TensorBoard记录
+                    if hasattr(self, 'tensorboard_writer') and self.tensorboard_writer is not None:
+                        self.tensorboard_writer.add_scalar("sdf_fit/loss_sdf", loss_sdf.item(), total_epoch)
+                        self.tensorboard_writer.add_scalar("sdf_fit/loss_eikonal", loss_eikonal.item(), total_epoch)
+                        self.tensorboard_writer.add_scalar("sdf_fit/total_loss", total_loss.item(), total_epoch)
+                        self.tensorboard_writer.add_scalar("sdf_fit/active_levels", current_level, total_epoch)
+                        self.tensorboard_writer.add_scalar("sdf_fit/best_loss", best_loss, total_epoch)
+
+                level_epoch += 1
+                total_epoch += 1
+
+            pbar.close()
+            
+            # 打印当前层级的训练结果
+            if epochs_without_improvement >= patience:
+                print(f'\t [C2F] Level {current_level} converged after {level_epoch} epochs (patience reached)')
+            else:
+                print(f'\t [C2F] Level {current_level} reached max epochs ({max_epochs_per_level})')
+            print(f'\t       Best loss: {best_loss:.6f}')
+
+            # 增加层级
+            current_level += 1
+
+        print('\n[INFO][Trainer::fitMeshSDF]')
+        print(f'\t Adaptive coarse-to-fine SDF fitting completed!')
+        print(f'\t Total epochs: {total_epoch}, Final level: {neural_sdf.active_levels}')
+        return True
+
+    def fitMeshFileSDF(
+        self,
+        mesh_file_path: str,
+        sample_point_num: int = 8192,
+        lr: float = 1e-4,
+        log_interval: int = 100,
+        patience: int = 50,
+        min_delta: float = 1e-6,
+        max_epochs_per_level: int = 500,
+    ) -> bool:
+        """从文件加载mesh并使用自适应coarse-to-fine策略训练SDF。
+
+        Args:
+            mesh_file_path (str): mesh文件路径。
+            其他参数见 fitMeshSDF 方法。
+
+        Returns:
+            bool: 训练是否成功。
+        """
+        if not os.path.exists(mesh_file_path):
+            print('[ERROR][Trainer::fitMeshFileSDF]')
+            print('\t mesh file not exist!')
+            print('\t mesh_file_path:', mesh_file_path)
+            return False
+
+        mesh = loadMeshFile(mesh_file_path)
+
+        return self.fitMeshSDF(
+            mesh, sample_point_num, lr, log_interval,
+            patience, min_delta, max_epochs_per_level
+        )
 
     def start_of_epoch(self, current_epoch):
         r"""Things to do before an epoch.

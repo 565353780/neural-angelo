@@ -16,7 +16,8 @@ pip install addict gdown gpustat icecream imageio-ffmpeg \
   nvidia-ml-py3 open3d opencv-python-headless OpenEXR \
   pathlib pillow plotly pyequilib pyexr PyMCubes \
   pyquaternion pyyaml requests scikit-image scikit-video \
-  scipy seaborn tensorboard termcolor tqdm trimesh wandb
+  scipy seaborn tensorboard termcolor tqdm trimesh wandb \
+  warp-lang
 
 cd ../tiny-cuda-nn
 cmake . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo

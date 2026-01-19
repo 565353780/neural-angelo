@@ -28,7 +28,7 @@ class MLPforNeuralSDF(torch.nn.Module):
                 self._geometric_init(linear, k_in, k_out, first=(li == 0),
                                      skip_dim=(layer_dims[0] if li in self.skip_connection else 0))
             if use_weightnorm:
-                linear = torch.nn.utils.weight_norm(linear)
+                linear = torch.nn.utils.parametrizations.weight_norm(linear)
             self.linears.append(linear)
             if use_layernorm and li != len(layer_dim_pairs) - 1:
                 self.layer_norm.append(torch.nn.LayerNorm(k_out))

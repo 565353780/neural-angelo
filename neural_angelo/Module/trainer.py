@@ -7,10 +7,9 @@ import torch.nn.functional as torch_F
 from tqdm import tqdm
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 
-from neural_angelo.Data.get_dataloader import get_train_dataloader, get_val_dataloader, get_test_dataloader
 from neural_angelo.Util.init_weight import weights_init, weights_rescale
 from neural_angelo.Util.model_average import ModelAverage
 from neural_angelo.Util.misc import to_cuda, requires_grad, Timer
@@ -18,19 +17,13 @@ from neural_angelo.Util.set_random_seed import set_random_seed
 from neural_angelo.Util.visualization import tensorboard_image
 from neural_angelo.Util.nerf_misc import eikonal_loss, curvature_loss
 
+from neural_angelo.Dataset.dataloader import get_train_dataloader, get_val_dataloader
 from neural_angelo.Model.model import Model
+from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Module.checkpointer import Checkpointer
 
 
 def _calculate_model_size(model):
-    r"""Calculate number of parameters in a PyTorch network.
-
-    Args:
-        model (obj): PyTorch network.
-
-    Returns:
-        (int): Number of parameters.
-    """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
@@ -88,8 +81,13 @@ class Trainer(object):
         # Initialize loss functions.
         self.init_losses(cfg)
 
-        self.checkpointer = Checkpointer(cfg, self.model, self.optim, self.sched)
+        self.checkpointer = Checkpointer(self.model, self.optim, self.sched)
         self.timer = Timer(cfg)
+
+        # 检查点路径设置
+        self.checkpoint_path_last = os.path.join(cfg.logdir, 'model_last.pt')
+        self.checkpoint_path_best = os.path.join(cfg.logdir, 'model_best.pt')
+        self.best_psnr = float('-inf')  # 追踪最佳PSNR
 
         # -------- The initialization steps below can be skipped during inference. --------
         if self.is_inference:
@@ -97,8 +95,6 @@ class Trainer(object):
 
         # Initialize logging attributes.
         self.init_logging_attributes()
-        # Initialize validation parameters.
-        self.init_val_parameters()
         if 'TORCH_HOME' not in os.environ:
             os.environ['TORCH_HOME'] = os.path.join(os.environ['HOME'], ".cache")
 
@@ -134,8 +130,6 @@ class Trainer(object):
             self.train_data_loader = get_train_dataloader(cfg, shuffle=shuffle, drop_last=drop_last, seed=seed)
         elif split == "val":
             self.eval_data_loader = get_val_dataloader(cfg, seed=seed)
-        elif split == "test":
-            self.eval_data_loader = get_test_dataloader(cfg)
 
     def setup_model(self, cfg, seed=0):
         r"""Return the networks. We will first set the random seed to a fixed value so that the network will be
@@ -226,7 +220,7 @@ class Trainer(object):
             scaler_kwargs.pop('dtype', None)
             scaler_kwargs.pop('cache_enabled', None)
 
-        self.scaler = GradScaler(**scaler_kwargs)
+        self.scaler = GradScaler('cuda', **scaler_kwargs)
 
     def init_logging_attributes(self):
         r"""Initialize logging attributes."""
@@ -238,29 +232,36 @@ class Trainer(object):
         if self.cfg.speed_benchmark:
             self.timer.reset()
 
-    def init_val_parameters(self):
-        r"""Initialize validation parameters."""
-        if self.cfg.metrics_iter is None:
-            self.cfg.metrics_iter = self.cfg.checkpoint.save_iter
-        if self.cfg.metrics_epoch is None:
-            self.cfg.metrics_epoch = self.cfg.checkpoint.save_epoch
-
-    def init_tensorboard(self, cfg, enabled=True):
-        r"""Initialize TensorBoard logger.
+    def load_checkpoint(self, checkpoint_path=None, load_opt=True, load_sch=True):
+        """加载检查点以恢复训练或进行推理。
 
         Args:
-            cfg (obj): Global configuration.
-            enabled (bool): Whether to enable TensorBoard logging.
+            checkpoint_path (str): 检查点文件路径。如果为 None，则尝试加载 model_last.pt。
+            load_opt (bool): 是否加载优化器状态。
+            load_sch (bool): 是否加载调度器状态。
         """
-        if enabled:
-            print('Initialize TensorBoard')
-            tensorboard_dir = os.path.join(cfg.logdir, "tensorboard")
-            os.makedirs(tensorboard_dir, exist_ok=True)
-            self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_dir)
-            # Log dataset name as a text summary
-            self.tensorboard_writer.add_text('config/dataset', cfg.data.name, 0)
-        else:
-            self.tensorboard_writer = None
+        if checkpoint_path is None:
+            # 默认尝试加载 model_last.pt
+            if os.path.exists(self.checkpoint_path_last):
+                checkpoint_path = self.checkpoint_path_last
+        self.checkpointer.load(
+            checkpoint_path,
+            load_opt=load_opt,
+            load_sch=load_sch,
+            iteration_mode=self.cfg.optim.sched.iteration_mode,
+            strict_resume=self.cfg.checkpoint.strict_resume
+        )
+
+    def init_tensorboard(self, cfg, enabled: bool=True) -> bool:
+        self.tensorboard_writer = None
+        if not enabled:
+            return True
+
+        print('Initialize TensorBoard')
+        tensorboard_dir = os.path.join(cfg.logdir, getCurrentTime())
+        os.makedirs(tensorboard_dir, exist_ok=True)
+        self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_dir)
+        return True
 
     def start_of_epoch(self, current_epoch):
         r"""Things to do before an epoch.
@@ -303,20 +304,12 @@ class Trainer(object):
 
         self._end_of_iteration(data, current_epoch, current_iteration)
 
-        # Checkpoint saving (consolidated)
-        should_save = (self.checkpointer.reached_checkpointing_period(self.timer) or
-                       current_iteration % self.cfg.checkpoint.save_iter == 0 or
-                       current_iteration == self.cfg.max_iter)
-        if should_save:
-            self.checkpointer.save(current_epoch, current_iteration)
-            self.timer.checkpoint_tic()
-
-        if current_iteration % self.cfg.checkpoint.save_latest_iter == 0:
-            self.checkpointer.save(current_epoch, current_iteration, latest=True)
+        # 保存 model_last.pt（每隔一定迭代次数保存一次）
+        if current_iteration % self.cfg.checkpoint.save_iter == 0 or current_iteration == self.cfg.max_iter:
+            self.checkpointer.save(self.checkpoint_path_last, current_epoch, current_iteration)
 
         if self.cfg.optim.sched.iteration_mode:
             self.sched.step()
-        self.timer.reset_timeout_counter()
 
     def end_of_epoch(self, data, current_epoch, current_iteration):
         r"""Things to do after an epoch."""
@@ -326,10 +319,6 @@ class Trainer(object):
         print('Epoch: {}, total time: {:6f}.'.format(current_epoch, elapsed_epoch_time))
         self.timer.time_epoch = elapsed_epoch_time
         self._end_of_epoch(data, current_epoch, current_iteration)
-
-        if current_epoch % self.cfg.checkpoint.save_epoch == 0:
-            self.checkpointer.save(current_epoch, current_iteration)
-
 
     def _update_progress(self, current_iteration):
         r"""Update training progress and model parameters."""
@@ -367,6 +356,8 @@ class Trainer(object):
             data_all = self.test(self.eval_data_loader, mode="val")
             self.log_tensorboard_scalars(data_all, mode="val")
             self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+            # 判断是否为最佳模型并保存
+            self._save_best_model_if_needed(current_epoch, current_iteration)
 
     def _end_of_epoch(self, data, current_epoch, current_iteration):
         r"""Operations to do after an epoch.
@@ -382,7 +373,16 @@ class Trainer(object):
             # Log the results to TensorBoard.
             self.log_tensorboard_scalars(data_all, mode="val")
             self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
+            # 判断是否为最佳模型并保存
+            self._save_best_model_if_needed(current_epoch, current_iteration)
 
+    def _save_best_model_if_needed(self, current_epoch, current_iteration):
+        """根据PSNR判断是否保存最佳模型。"""
+        current_psnr = self.metrics["psnr"].detach().item()
+        if current_psnr > self.best_psnr:
+            self.best_psnr = current_psnr
+            self.checkpointer.save(self.checkpoint_path_best, current_epoch, current_iteration)
+            print(f'New best model saved! PSNR: {current_psnr:.4f}')
 
     def train_step(self, data, last_iter_in_epoch=False):
         r"""One training step.
@@ -402,7 +402,7 @@ class Trainer(object):
             'enabled': self.cfg.trainer.amp_config.enabled,
             'dtype': autocast_dtype
         }
-        with autocast(**amp_kwargs):
+        with autocast('cuda', **amp_kwargs):
             total_loss = self.model_forward(data)
             # Scale down the loss w.r.t. gradient accumulation iterations.
             total_loss = total_loss / float(self.cfg.trainer.grad_accum_iter)
@@ -451,9 +451,8 @@ class Trainer(object):
             data_all = self.test(self.eval_data_loader, mode="val")
             self.log_tensorboard_scalars(data_all, mode="val")
             self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
-
-        self.timer.checkpoint_tic()  # start timer
-        self.timer.reset_timeout_counter()
+            # 判断是否为最佳模型并保存
+            self._save_best_model_if_needed(start_epoch, current_iteration)
         for current_epoch in range(start_epoch, cfg.max_epoch):
             self.start_of_epoch(current_epoch)
             data_loader_wrapper = tqdm(data_loader, desc=f"Training epoch {current_epoch + 1}", leave=False)

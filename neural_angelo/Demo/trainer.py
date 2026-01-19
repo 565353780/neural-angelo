@@ -25,10 +25,8 @@ def demo():
 
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
 
-    checkpoint = data_folder + "na/latest_checkpoint.pt"
-    resume = True
-    checkpoint = None
-    resume = False
+    # 检查点路径（如果文件存在则自动恢复训练，否则从头训练）
+    checkpoint = data_folder + "na/logs/latest_checkpoint.pt"
 
     seed = 0
 
@@ -66,11 +64,10 @@ def demo():
     trainer.set_data_loader(cfg, split="train", seed=seed)
     trainer.set_data_loader(cfg, split="val", seed=seed)
 
-    # 加载检查点
+    # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
     print("加载检查点...")
     trainer.checkpointer.load(
         checkpoint_path=checkpoint,
-        resume=resume,
         load_sch=True,
         load_opt=True
     )

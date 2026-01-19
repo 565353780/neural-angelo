@@ -11,7 +11,7 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 '''
 
 import torch
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 
 def volume_rendering_weights(ray, densities, depths, depth_far=None):
@@ -93,7 +93,7 @@ def alpha_compositing_weights(alphas):
     """
     alphas_front = torch.cat([torch.zeros_like(alphas[..., :1]),
                               alphas[..., :-1]], dim=2)  # [B,R,N]
-    with autocast(enabled=False):  # TODO: may be unstable in some cases.
+    with autocast('cuda', enabled=False):  # TODO: may be unstable in some cases.
         visibility = (1 - alphas_front).cumprod(dim=2)  # [B,R,N]
     weights = (alphas * visibility)[..., None]  # [B,R,N,1]
     return weights

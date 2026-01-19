@@ -175,7 +175,7 @@ class MLPwithSkipConnection(torch.nn.Module):
                 k_in += layer_dims[0]
             linear = torch.nn.Linear(k_in, k_out)
             if use_weightnorm:
-                linear = torch.nn.utils.weight_norm(linear)
+                linear = torch.nn.utils.parametrizations.weight_norm(linear)
             self.linears.append(linear)
             if use_layernorm and li != len(layer_dim_pairs) - 1:
                 self.layer_norm.append(torch.nn.LayerNorm(k_out))

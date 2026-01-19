@@ -2,7 +2,7 @@ import torch
 import random
 
 from neural_angelo.Dataset.data import Dataset
-from neural_angelo.Data.dataloader import MultiEpochsDataLoader
+from neural_angelo.Module.multi_epochs_dataloader import MultiEpochsDataLoader
 
 
 def _create_dataloader(cfg, is_inference, batch_size, shuffle, drop_last, 
@@ -60,15 +60,4 @@ def get_val_dataloader(cfg, subset_indices=None, seed=0):
         subset_indices=subset_indices,
         subset_size=getattr(cfg.data.val, 'subset', None),
         seed=seed
-    )
-
-
-def get_test_dataloader(cfg, subset_indices=None):
-    """返回测试数据加载器。"""
-    return _create_dataloader(
-        cfg, is_inference=True,
-        batch_size=cfg.data.val.batch_size,
-        shuffle=False, drop_last=False,
-        use_multi_epoch_loader=False,
-        subset_indices=subset_indices
     )

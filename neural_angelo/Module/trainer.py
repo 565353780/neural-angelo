@@ -116,9 +116,9 @@ class Trainer(object):
 
         self.warm_up_end = cfg.optim.sched.warm_up_end
         self.cfg_gradient = cfg.model.object.sdf.gradient
-        if cfg.model.object.sdf.encoding.type == "hashgrid" and cfg.model.object.sdf.encoding.coarse2fine.enabled:
-            self.c2f_step = cfg.model.object.sdf.encoding.coarse2fine.step
-            self.model_module.neural_sdf.warm_up_end = self.warm_up_end
+
+        self.c2f_step = cfg.model.object.sdf.encoding.coarse2fine.step
+        self.model_module.neural_sdf.warm_up_end = self.warm_up_end
 
         self.criteria["render"] = torch.nn.L1Loss()
 
@@ -330,13 +330,11 @@ class Trainer(object):
         model = self.model_module
         max_iter = self.cfg.max_epoch * self.iters_per_epoch
         self.progress = model.progress = current_iteration / max_iter
-        if self.cfg.model.object.sdf.encoding.coarse2fine.enabled:
-            model.neural_sdf.set_active_levels(current_iteration)
-            if self.cfg_gradient.mode == "numerical":
-                model.neural_sdf.set_normal_epsilon()
-                self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
-        elif self.cfg_gradient.mode == "numerical":
-            model.neural_sdf.set_normal_epsilon()
+
+        model.neural_sdf.set_active_levels(current_iteration)
+
+        model.neural_sdf.set_normal_epsilon()
+        self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
 
     def _save_best_model_if_needed(self, current_epoch, current_iteration):
         """根据PSNR判断是否保存最佳模型。"""
@@ -510,7 +508,7 @@ class Trainer(object):
     def _compute_loss(self, data, mode=None):
         if mode == "train":
             # Compute loss only on randomly sampled rays.
-            self.losses["render"] = self.criteria["render"](data["rgb"], data["image_sampled"]) * 3  # FIXME:sumRGB?!
+            self.losses["render"] = self.criteria["render"](data["rgb"], data["image_sampled"]) * 3
             self.metrics["psnr"] = -10 * torch_F.mse_loss(data["rgb"], data["image_sampled"]).log10()
             if "eikonal" in self.weights.keys():
                 self.losses["eikonal"] = eikonal_loss(data["gradients"], outside=data["outside"])
@@ -549,10 +547,9 @@ class Trainer(object):
             self.tensorboard_writer.add_scalar(f"{mode}/curvature_weight", self.weights["curvature"], self.current_iteration)
         if "eikonal" in self.weights:
             self.tensorboard_writer.add_scalar(f"{mode}/eikonal_weight", self.weights["eikonal"], self.current_iteration)
-        if mode == "train" and self.cfg_gradient.mode == "numerical":
+        if mode == "train":
             self.tensorboard_writer.add_scalar(f"{mode}/epsilon", self.model_module.neural_sdf.normal_eps, self.current_iteration)
-        if self.cfg.model.object.sdf.encoding.coarse2fine.enabled:
-            self.tensorboard_writer.add_scalar(f"{mode}/active_levels", self.model_module.neural_sdf.active_levels, self.current_iteration)
+        self.tensorboard_writer.add_scalar(f"{mode}/active_levels", self.model_module.neural_sdf.active_levels, self.current_iteration)
 
     def log_tensorboard_images(self, data, mode=None, max_samples=None):
         trim_test_samples(data, max_samples=max_samples)

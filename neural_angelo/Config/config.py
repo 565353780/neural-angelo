@@ -24,14 +24,14 @@ class Config:
         depth_vis_scale: float = 0.5
         grad_accum_iter: int = 1  # 梯度累积迭代次数
         allow_tf32: bool = True  # 是否允许 TF32 运算
-        
+
         class EMAConfig:
             enabled: bool = False
             beta: float = 0.9999  # EMA 衰减系数
             start_iteration: int = 0  # 开始 EMA 的迭代次数
-        
+
         ema_config = EMAConfig()
-        
+
         class LossWeight:
             render: float = 1.0
             eikonal: float = 0.1
@@ -56,7 +56,7 @@ class Config:
         amp_config = AMPConfig()
 
     trainer = Trainer()
-    
+
     # ==================== 模型配置 ====================
     class Model:
         class Object:
@@ -65,49 +65,45 @@ class Config:
                     num_layers: int = 1
                     hidden_dim: int = 256
                     skip: list = []
-                    activ: str = "softplus"
-                    
+
                     class ActivParams:
                         beta: int = 100
-                    
+
                     activ_params = ActivParams()
                     geometric_init: bool = True
                     weight_norm: bool = True
                     out_bias: float = 0.5
                     inside_out: bool = False
-                
+
                 mlp = MLP()
-                
+
                 class Encoding:
-                    type: str = "hashgrid"
                     levels: int = 16
-                    
+
                     class Hashgrid:
                         min_logres: int = 5
                         max_logres: int = 11
                         dict_size: int = 22
                         dim: int = 8
                         range: list = [-2, 2]
-                    
+
                     hashgrid = Hashgrid()
-                    
+
                     class Coarse2Fine:
-                        enabled: bool = True
                         init_active_level: int = 4
                         step: int = 5000
-                    
+
                     coarse2fine = Coarse2Fine()
-                
+
                 encoding = Encoding()
-                
+
                 class Gradient:
-                    mode: str = "numerical"
                     taps: int = 4
-                
+
                 gradient = Gradient()
-            
+
             sdf = SDF()
-            
+
             class RGB:
                 class MLP:
                     num_layers: int = 4
@@ -116,31 +112,31 @@ class Config:
                     activ: str = "relu_"
                     activ_params: dict = {}
                     weight_norm: bool = True
-                
+
                 mlp = MLP()
                 mode: str = "idr"
-                
+
                 class EncodingView:
                     type: str = "spherical"
                     levels: int = 3
-                
+
                 encoding_view = EncodingView()
-            
+
             rgb = RGB()
-            
+
             class SVar:
                 init_val: float = 3.0
                 anneal_end: float = 0.1
-            
+
             s_var = SVar()
-        
+
         object = Object()
-        
+
         class Background:
             enabled: bool = True
             white: bool = False
             view_dep: bool = True
-            
+
             class MLP:
                 num_layers: int = 8
                 hidden_dim: int = 256

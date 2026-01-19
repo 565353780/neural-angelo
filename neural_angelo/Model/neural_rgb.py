@@ -1,9 +1,9 @@
 import torch
 from functools import partial
 
-from neural_angelo.Util import nerf_util
-from neural_angelo.Util.nerf_misc import get_activation
-from neural_angelo.Util.spherical_harmonics import get_spherical_harmonics
+from neural_angelo.Model.Layer.positional_encoding import positional_encoding
+from neural_angelo.Model.Layer.mlp_with_skip_connection import MLPwithSkipConnection
+from neural_angelo.Method.spherical_harmonics import get_spherical_harmonics
 
 
 class NeuralRGB(torch.nn.Module):
@@ -30,9 +30,11 @@ class NeuralRGB(torch.nn.Module):
     def build_mlp(self, cfg_mlp, input_dim=3):
         # RGB prediction
         layer_dims = [input_dim] + [cfg_mlp.hidden_dim] * cfg_mlp.num_layers + [3]
-        activ = get_activation(cfg_mlp.activ, **cfg_mlp.activ_params)
-        self.mlp = nerf_util.MLPwithSkipConnection(layer_dims, skip_connection=cfg_mlp.skip, activ=activ,
-                                                   use_weightnorm=cfg_mlp.weight_norm)
+        self.mlp = MLPwithSkipConnection(
+            layer_dims,
+            skip_connection=cfg_mlp.skip,
+            use_weightnorm=cfg_mlp.weight_norm,
+        )
 
     def forward(self, points_3D, normals, rays_unit, feats, app):
         view_enc = self.encode_view(rays_unit)  # [...,LD]
@@ -49,7 +51,7 @@ class NeuralRGB(torch.nn.Module):
 
     def encode_view(self, rays_unit):
         if self.cfg_rgb.encoding_view.type == "fourier":
-            view_enc = nerf_util.positional_encoding(rays_unit, num_freq_bases=self.cfg_rgb.encoding_view.levels)
+            view_enc = positional_encoding(rays_unit, num_freq_bases=self.cfg_rgb.encoding_view.levels)
         elif self.cfg_rgb.encoding_view.type == "spherical":
             view_enc = self.spherical_harmonic_encoding(rays_unit)
         else:

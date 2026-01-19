@@ -1,12 +1,20 @@
 import torch
 import numpy as np
-import torch.nn.functional as torch_F
 
 
 class MLPforNeuralSDF(torch.nn.Module):
 
-    def __init__(self, layer_dims, skip_connection=[], activ=None, use_layernorm=False, use_weightnorm=False,
-                 geometric_init=False, out_bias=0., invert=False):
+    def __init__(
+        self,
+        layer_dims,
+        skip_connection=[],
+        use_layernorm=False,
+        use_weightnorm=False,
+        geometric_init=False,
+        out_bias=0.,
+        invert=False,
+        activ_beta: float=100.0,
+    ):
         """Initialize a multi-layer perceptron with skip connection.
         Args:
             layer_dims: A list of integers representing the number of channels in each layer.
@@ -25,7 +33,7 @@ class MLPforNeuralSDF(torch.nn.Module):
                 k_in += layer_dims[0]
             linear = torch.nn.Linear(k_in, k_out)
             if geometric_init:
-                self._geometric_init(linear, k_in, k_out, first=(li == 0),
+                self._geometric_init(linear, k_out, first=(li == 0),
                                      skip_dim=(layer_dims[0] if li in self.skip_connection else 0))
             if use_weightnorm:
                 linear = torch.nn.utils.parametrizations.weight_norm(linear)
@@ -38,7 +46,7 @@ class MLPforNeuralSDF(torch.nn.Module):
         self.linear_sdf = torch.nn.Linear(k_in, 1)
         if geometric_init:
             self._geometric_init_sdf(self.linear_sdf, k_in, out_bias=out_bias, invert=invert)
-        self.activ = activ or torch_F.relu_
+        self.activ = torch.nn.Softplus(beta=activ_beta)
 
     def forward(self, input, with_sdf=True, with_feat=True):
         feat = input
@@ -56,7 +64,7 @@ class MLPforNeuralSDF(torch.nn.Module):
             feat = feat_activ
         return out
 
-    def _geometric_init(self, linear, k_in, k_out, first=False, skip_dim=0):
+    def _geometric_init(self, linear, k_out, first=False, skip_dim=0):
         torch.nn.init.constant_(linear.bias, 0.0)
         torch.nn.init.normal_(linear.weight, 0.0, np.sqrt(2 / k_out))
         if first:

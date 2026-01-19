@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import torch
 import inspect
 import torch.nn.functional as torch_F
@@ -100,12 +99,6 @@ class Trainer(object):
         self.init_logging_attributes()
         # Initialize validation parameters.
         self.init_val_parameters()
-        # AWS credentials.
-        if hasattr(cfg, 'aws_credentials_file'):
-            with open(cfg.aws_credentials_file) as fin:
-                self.credentials = json.load(fin)
-        else:
-            self.credentials = None
         if 'TORCH_HOME' not in os.environ:
             os.environ['TORCH_HOME'] = os.path.join(os.environ['HOME'], ".cache")
 
@@ -272,20 +265,14 @@ class Trainer(object):
         Args:
             current_epoch (int): Current number of epoch.
         """
-        self._start_of_epoch(current_epoch)
         self.current_epoch = current_epoch
         self.start_epoch_time = time.time()
 
     def start_of_iteration(self, data, current_iteration):
-        r"""Things to do before an iteration.
-
-        Args:
-            data (dict): Data used for the current iteration.
-            current_iteration (int): Current number of iteration.
-        """
-        data = self._start_of_iteration(data, current_iteration)
-        data = to_cuda(data)
+        r"""Things to do before an iteration."""
         self.current_iteration = current_iteration
+        self._update_progress(current_iteration)
+        data = to_cuda(data)
         self.model.train()
         self.start_iteration_time = time.time()
         return data
@@ -300,89 +287,49 @@ class Trainer(object):
         """
         self.current_iteration = current_iteration
         self.current_epoch = current_epoch
-
-        # Accumulate time
         self.elapsed_iteration_time += time.time() - self.start_iteration_time
-        # Logging.
+
+        # Logging
         if current_iteration % self.cfg.logging_iter == 0:
             avg_time = self.elapsed_iteration_time / self.cfg.logging_iter
             self.timer.time_iteration = avg_time
             print('Iteration: {}, average iter time: {:6f}.'.format(current_iteration, avg_time))
             self.elapsed_iteration_time = 0
-
             if self.cfg.speed_benchmark:
-                # only needed when analyzing computation bottleneck.
                 self.timer._print_speed_benchmark(avg_time)
 
         self._end_of_iteration(data, current_epoch, current_iteration)
 
-        # Save everything to the checkpoint by time period.
-        if self.checkpointer.reached_checkpointing_period(self.timer):
+        # Checkpoint saving (consolidated)
+        should_save = (self.checkpointer.reached_checkpointing_period(self.timer) or
+                       current_iteration % self.cfg.checkpoint.save_iter == 0 or
+                       current_iteration == self.cfg.max_iter)
+        if should_save:
             self.checkpointer.save(current_epoch, current_iteration)
-            self.timer.checkpoint_tic()  # reset timer
+            self.timer.checkpoint_tic()
 
-        # Save everything to the checkpoint.
-        if current_iteration % self.cfg.checkpoint.save_iter == 0 or \
-                current_iteration == self.cfg.max_iter:
-            self.checkpointer.save(current_epoch, current_iteration)
-
-        # Save everything to the checkpoint using the name 'latest_checkpoint.pt'.
         if current_iteration % self.cfg.checkpoint.save_latest_iter == 0:
-            if current_iteration >= self.cfg.checkpoint.save_latest_iter:
-                self.checkpointer.save(current_epoch, current_iteration, True)
+            self.checkpointer.save(current_epoch, current_iteration, latest=True)
 
-        # Update the learning rate policy for the generator if operating in the iteration mode.
         if self.cfg.optim.sched.iteration_mode:
             self.sched.step()
-
-        # This iteration was successfully finished. Reset timeout counter.
         self.timer.reset_timeout_counter()
 
     def end_of_epoch(self, data, current_epoch, current_iteration):
-        r"""Things to do after an epoch.
-
-        Args:
-            data (dict): Data used for the current iteration.
-
-            current_epoch (int): Current number of epoch.
-            current_iteration (int): Current number of iteration.
-        """
-        # Update the learning rate policy for the generator if operating in the epoch mode.
-        self.current_iteration = current_iteration
-        self.current_epoch = current_epoch
+        r"""Things to do after an epoch."""
         if not self.cfg.optim.sched.iteration_mode:
             self.sched.step()
         elapsed_epoch_time = time.time() - self.start_epoch_time
-        # Logging.
         print('Epoch: {}, total time: {:6f}.'.format(current_epoch, elapsed_epoch_time))
         self.timer.time_epoch = elapsed_epoch_time
         self._end_of_epoch(data, current_epoch, current_iteration)
 
-        # Save everything to the checkpoint.
         if current_epoch % self.cfg.checkpoint.save_epoch == 0:
             self.checkpointer.save(current_epoch, current_iteration)
 
-    def _extra_step(self, data):
-        pass
 
-    def _start_of_epoch(self, current_epoch):
-        r"""Operations to do before starting an epoch.
-
-        Args:
-            current_epoch (int): Current number of epoch.
-        """
-        pass
-
-    def _start_of_iteration(self, data, current_iteration):
-        r"""Operations to do before starting an iteration.
-
-        Args:
-            data (dict): Data used for the current iteration.
-            current_iteration (int): Current epoch number.
-        Returns:
-            (dict): Data used for the current iteration. They might be
-                processed by the custom _start_of_iteration function.
-        """
+    def _update_progress(self, current_iteration):
+        r"""Update training progress and model parameters."""
         model = self.model_module
         self.progress = model.progress = current_iteration / self.cfg.max_iter
         if self.cfg.model.object.sdf.encoding.coarse2fine.enabled:
@@ -392,7 +339,6 @@ class Trainer(object):
                 self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
         elif self.cfg_gradient.mode == "numerical":
             model.neural_sdf.set_normal_epsilon()
-        return data
 
     def _end_of_iteration(self, data, current_epoch, current_iteration):
         r"""Operations to do after an iteration.
@@ -404,28 +350,18 @@ class Trainer(object):
         """
         # Log to TensorBoard.
         if current_iteration % self.cfg.tensorboard_scalar_iter == 0:
-            # Compute the elapsed time (as in the original base trainer).
             self.timer.time_iteration = self.elapsed_iteration_time / self.cfg.tensorboard_scalar_iter
             self.elapsed_iteration_time = 0
-            # Log scalars.
             self.log_tensorboard_scalars(data, mode="train")
             # Exit if the training loss has gone to NaN/inf.
-            if self.losses["total"].isnan():
+            if self.losses["total"].isnan() or self.losses["total"].isinf():
                 self.finalize(self.cfg)
-                raise ValueError("Training loss has gone to NaN!!!")
-            if self.losses["total"].isinf():
-                self.finalize(self.cfg)
-                raise ValueError("Training loss has gone to infinity!!!")
-        # Run evaluation to log images to TensorBoard.
-        if current_iteration % self.cfg.tensorboard_image_iter == 0:
+                raise ValueError("Training loss has gone to NaN or infinity!!!")
+        # Run validation (merge tensorboard_image_iter and validation_iter checks)
+        should_validate = (current_iteration % self.cfg.tensorboard_image_iter == 0 or
+                           current_iteration % self.cfg.validation_iter == 0)
+        if should_validate:
             data_all = self.test(self.eval_data_loader, mode="val")
-            # Log the results to TensorBoard.
-            self.log_tensorboard_scalars(data_all, mode="val")
-            self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
-        # Run validation on val set.
-        if current_iteration % self.cfg.validation_iter == 0:
-            data_all = self.test(self.eval_data_loader, mode="val")
-            # Log the results to TensorBoard.
             self.log_tensorboard_scalars(data_all, mode="val")
             self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
 
@@ -444,13 +380,6 @@ class Trainer(object):
             self.log_tensorboard_scalars(data_all, mode="val")
             self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
 
-    def _get_visualizations(self, data):
-        r"""Compute visualization outputs.
-
-        Args:
-            data (dict): Data used for the current iteration.
-        """
-        return None
 
     def train_step(self, data, last_iter_in_epoch=False):
         r"""One training step.
@@ -479,8 +408,6 @@ class Trainer(object):
         self.timer._time_before_backward()
         self.scaler.scale(total_loss).backward()
 
-        self._extra_step(data)
-
         # Perform an optimizer step. This enables gradient accumulation when grad_accum_iter is not 1.
         if (self.current_iteration + 1) % self.cfg.trainer.grad_accum_iter == 0 or last_iter_in_epoch:
             self.timer._time_before_step()
@@ -508,20 +435,19 @@ class Trainer(object):
         return total_loss
 
     def train(self, cfg, data_loader):
-        self.progress = self.model_module.progress = self.current_iteration / self.cfg.max_iter
+        # Resume from checkpoint if available
+        start_epoch = self.checkpointer.resume_epoch or self.current_epoch
+        current_iteration = self.checkpointer.resume_iteration or self.current_iteration
+        self.current_epoch = start_epoch
+        self.current_iteration = current_iteration
+        self.progress = self.model_module.progress = current_iteration / self.cfg.max_iter
 
-        self.current_epoch = self.checkpointer.resume_epoch or self.current_epoch
-        self.current_iteration = self.checkpointer.resume_iteration or self.current_iteration
-        if ((self.current_epoch % self.cfg.validation_epoch == 0 or
-             self.current_iteration % self.cfg.validation_iter == 0)):
-            # Do an initial validation.
+        # Initial validation
+        if (start_epoch % self.cfg.validation_epoch == 0 or
+            current_iteration % self.cfg.validation_iter == 0):
             data_all = self.test(self.eval_data_loader, mode="val")
-            # Log the results to TensorBoard.
             self.log_tensorboard_scalars(data_all, mode="val")
             self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
-        # Train.
-        start_epoch = self.checkpointer.resume_epoch or self.current_epoch  # The epoch to start with.
-        current_iteration = self.checkpointer.resume_iteration or self.current_iteration  # The starting iteration.
 
         self.timer.checkpoint_tic()  # start timer
         self.timer.reset_timeout_counter()
@@ -547,16 +473,8 @@ class Trainer(object):
         print('Done with training!!!')
 
     @torch.no_grad()
-    def test(self, data_loader, output_dir=None, inference_args=None, mode="test"):
-        """The evaluation/inference engine.
-        Args:
-            data_loader: The data loader.
-            output_dir: Output directory to dump the test results.
-            inference_args: (unused)
-            mode: Evaluation mode {"val", "test"}. Can be other modes, but will only gather the data.
-        Returns:
-            data_all: A dictionary of all the data.
-        """
+    def test(self, data_loader, mode="test"):
+        """The evaluation/inference engine."""
         if self.cfg.trainer.ema_config.enabled:
             model = self.model.averaged_model
         else:
@@ -600,34 +518,23 @@ class Trainer(object):
         if hasattr(self, 'tensorboard_writer') and self.tensorboard_writer is not None:
             self.tensorboard_writer.close()
 
-    # Trainer-specific methods (overrides and additions)
     def init_losses(self, cfg):
-        r"""Initialize loss functions. All loss names have weights. Some have criterion modules."""
+        r"""Initialize loss functions."""
         self.losses = dict()
-
-        # Mapping from loss names to criterion modules.
         self.criteria = torch.nn.ModuleDict()
-        # Mapping from loss names to loss weights.
         self.weights = dict()
 
-        # Trainer-specific loss initialization
-        # 支持 dict 和 class 两种 loss_weight 格式
+        # Extract loss weights from config (supports both dict and class formats)
         loss_weight_obj = cfg.trainer.loss_weight
         if hasattr(loss_weight_obj, 'items'):
-            # dict 格式
-            self.weights = {key: value for key, value in loss_weight_obj.items() if value}
+            self.weights = {k: v for k, v in loss_weight_obj.items() if v}
         else:
-            # class 格式 - 遍历属性
-            for key in dir(loss_weight_obj):
-                if not key.startswith('_') and not callable(getattr(loss_weight_obj, key)):
-                    value = getattr(loss_weight_obj, key)
-                    if value:
-                        self.weights[key] = value
+            self.weights = {k: getattr(loss_weight_obj, k) for k in dir(loss_weight_obj)
+                           if not k.startswith('_') and not callable(getattr(loss_weight_obj, k))
+                           and getattr(loss_weight_obj, k)}
 
         for loss_name, loss_weight in self.weights.items():
             print("Loss {:<20} Weight {}".format(loss_name, loss_weight))
-            if loss_name in self.criteria.keys() and self.criteria[loss_name] is not None:
-                self.criteria[loss_name].to('cuda')
 
     def _compute_loss(self, data, mode=None):
         if mode == "train":
@@ -667,9 +574,6 @@ class Trainer(object):
                 self.tensorboard_writer.add_scalar(f"{mode}/loss/{key}", value, self.current_iteration)
         self.tensorboard_writer.add_scalar("iteration", self.current_iteration, self.current_iteration)
         self.tensorboard_writer.add_scalar("epoch", self.current_epoch, self.current_iteration)
-
-        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
-            return
         self.tensorboard_writer.add_scalar(f"{mode}/PSNR", self.metrics["psnr"].detach().item(), self.current_iteration)
         self.tensorboard_writer.add_scalar(f"{mode}/s-var", self.model_module.s_var.item(), self.current_iteration)
         if "curvature" in self.weights:

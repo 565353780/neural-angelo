@@ -118,6 +118,9 @@ class Trainer(object):
 
         self.criteria["render"] = torch.nn.L1Loss()
 
+        self.mode = 'train'
+        return
+
     def set_data_loader(self, cfg, split, shuffle=True, drop_last=True, seed=0):
         """Set the data loader corresponding to the indicated split.
         Args:

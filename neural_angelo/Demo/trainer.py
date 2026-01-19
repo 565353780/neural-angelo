@@ -56,11 +56,11 @@ def demo():
     print(f"  - 保存检查点间隔: {cfg.checkpoint.save_iter}")
     print(f"  - TensorBoard 记录间隔: {cfg.tensorboard_scalar_iter}")
     print()
-    
+
     # 初始化训练器
     print("初始化训练器...")
     trainer = Trainer(cfg, is_inference=False, seed=seed)
-    
+
     # 设置数据加载器
     print("设置数据加载器...")
     trainer.set_data_loader(cfg, split="train", seed=seed)
@@ -78,22 +78,19 @@ def demo():
     # 初始化 TensorBoard
     trainer.init_tensorboard(cfg, enabled=True)
 
-    # 设置训练模式
-    trainer.mode = 'train'
-
     # 开始训练
     print("\n" + "=" * 60)
     print("开始训练...")
     print("=" * 60 + "\n")
-    
+
     trainer.train(
         cfg,
         trainer.train_data_loader,
     )
-    
+
     # 结束训练
     trainer.finalize(cfg)
-    
+
     print("\n" + "=" * 60)
     print("训练完成!")
     print(f"模型和日志已保存到: {cfg.logdir}")

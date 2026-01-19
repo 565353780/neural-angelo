@@ -13,10 +13,11 @@ from neural_angelo.Util.init_weight import weights_init, weights_rescale
 from neural_angelo.Util.model_average import ModelAverage
 from neural_angelo.Util.misc import to_cuda, requires_grad
 from neural_angelo.Util.visualization import tensorboard_image
-from neural_angelo.Util.nerf_misc import eikonal_loss, curvature_loss
 
 from neural_angelo.Dataset.dataloader import get_train_dataloader, get_val_dataloader
 from neural_angelo.Model.model import Model
+from neural_angelo.Loss.eikonal import eikonal_loss
+from neural_angelo.Loss.curvature import curvature_loss
 from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Module.checkpointer import Checkpointer
 
@@ -289,7 +290,7 @@ class Trainer(object):
 
     def end_of_epoch(self, data, current_epoch, current_iteration):
         r"""Things to do after an epoch.
-        
+
         所有的验证、保存、日志记录操作都在这里统一进行。
 
         Args:

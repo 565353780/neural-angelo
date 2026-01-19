@@ -20,11 +20,10 @@ from collections import OrderedDict
 import torch
 import torch.nn.functional as F
 
-from imaginaire.utils.distributed import is_master, master_only
+from neural_angelo.Util.distributed import is_master, master_only
+from neural_angelo.Util.termcolor import alert, PP  # noqa
 
 string_classes = (str, bytes)
-
-from imaginaire.utils.termcolor import alert, PP  # noqa
 
 
 def santize_args(name, locals_fn):
@@ -245,21 +244,6 @@ def random_shift(x, offset=0.05, mode='bilinear', padding_mode='reflection'):
     return x
 
 
-# def truncated_gaussian(threshold, size, seed=None, device=None):
-#     r"""Apply the truncated gaussian trick to trade diversity for quality
-#
-#     Args:
-#         threshold (float): Truncation threshold.
-#         size (list of integer): Tensor size.
-#         seed (int): Random seed.
-#         device:
-#     """
-#     state = None if seed is None else np.random.RandomState(seed)
-#     values = truncnorm.rvs(-threshold, threshold,
-#                            size=size, random_state=state)
-#     return torch.tensor(values, device=device).float()
-
-
 def apply_imagenet_normalization(input):
     r"""Normalize using ImageNet mean and std.
 
@@ -286,7 +270,6 @@ def alarm_handler(timeout_period, signum, frame):
     if ngc_job_id is not None:
         error_message += f" Failed NGC job ID: {ngc_job_id}."
     # Log timeout error (TensorBoard doesn't have alert functionality)
-    from imaginaire.utils.termcolor import alert
     alert(error_message)
     exit()
 

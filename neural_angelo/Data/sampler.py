@@ -76,7 +76,7 @@ class DistributedSamplerPreemptable(Sampler[T_co]):
     def __iter__(self):
         if self.shuffle:
             # deterministically shuffle based on epoch and seed
-            g = torch.Model()
+            g = torch.Generator()
             g.manual_seed(self.seed + self.epoch)
             indices = torch.randperm(len(self.dataset), generator=g).tolist()  # type: ignore[arg-type]
         else:

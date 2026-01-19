@@ -3,8 +3,8 @@ import torch.nn.functional as torch_F
 from functools import partial
 from collections import defaultdict
 
-from projects.nerf.utils import nerf_util, camera, render
-from projects.neuralangelo.utils import misc
+from neural_angelo.Util import nerf_util, camera, render
+from neural_angelo.Util import nerf_misc as misc
 
 from neural_angelo.Model.neural_sdf import NeuralSDF
 from neural_angelo.Model.neural_rgb import NeuralRGB

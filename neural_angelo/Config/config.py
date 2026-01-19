@@ -264,7 +264,7 @@ class Config:
             image_size: list = [300, 300]
             batch_size: int = 2
             subset: int = 4
-            max_viz_samples: int = 16
+            max_viz_samples: int = 4
 
         val = Val()
 

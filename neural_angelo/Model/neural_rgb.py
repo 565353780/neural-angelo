@@ -1,9 +1,9 @@
 import torch
 from functools import partial
 
-from projects.nerf.utils import nerf_util
-from projects.neuralangelo.utils.misc import get_activation
-from projects.neuralangelo.utils.spherical_harmonics import get_spherical_harmonics
+from neural_angelo.Util import nerf_util
+from neural_angelo.Util.nerf_misc import get_activation
+from neural_angelo.Util.spherical_harmonics import get_spherical_harmonics
 
 
 class NeuralRGB(torch.nn.Module):

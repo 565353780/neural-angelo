@@ -12,7 +12,7 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import torch.backends.cudnn as cudnn
 
-from imaginaire.utils.distributed import master_only_print as print
+from neural_angelo.Util.distributed import master_only_print as print
 
 
 def init_cudnn(deterministic, benchmark):

@@ -14,7 +14,7 @@ import copy
 
 import torch
 from torch import nn
-from imaginaire.utils.misc import requires_grad
+from neural_angelo.Util.misc import requires_grad
 
 
 def reset_batch_norm(m):

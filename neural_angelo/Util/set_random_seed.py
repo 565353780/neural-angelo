@@ -14,8 +14,8 @@ import random
 import numpy as np
 import torch
 
-from imaginaire.utils.distributed import get_rank
-from imaginaire.utils.distributed import master_only_print as print
+from neural_angelo.Util.distributed import get_rank
+from neural_angelo.Util.distributed import master_only_print as print
 
 
 def set_random_seed(seed, by_rank=False):

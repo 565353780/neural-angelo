@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import tinycudann as tcnn
 
-from projects.neuralangelo.utils.misc import get_activation
-from projects.nerf.utils import nerf_util
+from neural_angelo.Util.nerf_misc import get_activation
+from neural_angelo.Util import nerf_util
 
 from neural_angelo.Model.Layer.mlp import MLPforNeuralSDF
 

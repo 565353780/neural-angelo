@@ -16,7 +16,7 @@ import threading
 import queue
 
 
-class Dataset(torch.utils.data.Dataset):
+class BaseDataset(torch.utils.data.Dataset):
 
     def __init__(self, cfg, is_inference=False, is_test=False):
         super().__init__()

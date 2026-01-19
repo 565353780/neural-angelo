@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn.functional as torch_F
 
-from projects.nerf.utils import camera
+from neural_angelo.Util import camera
 
 
 def sample_dists(ray_size, dist_range, intvs, stratified, device="cuda"):

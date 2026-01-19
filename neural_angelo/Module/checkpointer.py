@@ -2,9 +2,9 @@ import os
 import torch
 import threading
 
-from imaginaire.utils.misc import to_cpu
-from imaginaire.utils.distributed import is_master, get_rank
-from imaginaire.utils.distributed import master_only_print as print
+from neural_angelo.Util.misc import to_cpu
+from neural_angelo.Util.distributed import is_master, get_rank
+from neural_angelo.Util.distributed import master_only_print as print
 
 
 class Checkpointer(object):

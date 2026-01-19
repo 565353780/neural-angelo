@@ -14,8 +14,6 @@ from functools import partial
 import numpy as np
 import torch
 import torch.nn.functional as torch_F
-import imaginaire.trainers.utils
-from torch.optim import lr_scheduler
 
 flip_mat = np.array([
     [1, 0, 0, 0],
@@ -23,52 +21,6 @@ flip_mat = np.array([
     [0, 0, -1, 0],
     [0, 0, 0, 1]
 ])
-
-
-def get_scheduler(cfg_opt, opt):
-    """Return the scheduler object.
-
-    Args:
-        cfg_opt (obj): Config for the specific optimization module (gen/dis).
-        opt (obj): PyTorch optimizer object.
-
-    Returns:
-        (obj): Scheduler
-    """
-    if cfg_opt.sched.type == 'two_steps_with_warmup':
-        warm_up_end = cfg_opt.sched.warm_up_end
-        two_steps = cfg_opt.sched.two_steps
-        gamma = cfg_opt.sched.gamma
-
-        def sch(x):
-            if x < warm_up_end:
-                return x / warm_up_end
-            else:
-                if x > two_steps[1]:
-                    return 1.0 / gamma ** 2
-                elif x > two_steps[0]:
-                    return 1.0 / gamma
-                else:
-                    return 1.0
-
-        scheduler = lr_scheduler.LambdaLR(opt, lambda x: sch(x))
-    elif cfg_opt.sched.type == 'cos_with_warmup':
-        alpha = cfg_opt.sched.alpha
-        max_iter = cfg_opt.sched.max_iter
-        warm_up_end = cfg_opt.sched.warm_up_end
-
-        def sch(x):
-            if x < warm_up_end:
-                return x / warm_up_end
-            else:
-                progress = (x - warm_up_end) / (max_iter - warm_up_end)
-                learning_factor = (np.cos(np.pi * progress) + 1.0) * 0.5 * (1 - alpha) + alpha
-                return learning_factor
-
-        scheduler = lr_scheduler.LambdaLR(opt, lambda x: sch(x))
-    else:
-        return imaginaire.trainers.utils.get_scheduler()
-    return scheduler
 
 
 def eikonal_loss(gradients, outside=None):

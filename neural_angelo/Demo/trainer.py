@@ -1,7 +1,8 @@
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
-from imaginaire.utils.cudnn import init_cudnn
-from imaginaire.utils.set_random_seed import set_random_seed
+from neural_angelo.Util.cudnn import init_cudnn
+from neural_angelo.Util.set_random_seed import set_random_seed
 
 from neural_angelo.Config.config import Config
 from neural_angelo.Module.trainer import Trainer

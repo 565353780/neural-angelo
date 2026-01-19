@@ -11,17 +11,28 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 
-from imaginaire.datasets.utils.get_dataloader import get_train_dataloader, get_val_dataloader, get_test_dataloader
-from imaginaire.models.utils.init_weight import weights_init, weights_rescale
-from imaginaire.trainers.utils.get_trainer import _calculate_model_size
-from imaginaire.models.utils.model_average import ModelAverage
-from imaginaire.utils.misc import to_cuda, requires_grad, Timer
-from imaginaire.utils.set_random_seed import set_random_seed
-from imaginaire.utils.visualization import tensorboard_image
-from projects.neuralangelo.utils.misc import eikonal_loss, curvature_loss
+from neural_angelo.Data.get_dataloader import get_train_dataloader, get_val_dataloader, get_test_dataloader
+from neural_angelo.Util.init_weight import weights_init, weights_rescale
+from neural_angelo.Util.model_average import ModelAverage
+from neural_angelo.Util.misc import to_cuda, requires_grad, Timer
+from neural_angelo.Util.set_random_seed import set_random_seed
+from neural_angelo.Util.visualization import tensorboard_image
+from neural_angelo.Util.nerf_misc import eikonal_loss, curvature_loss
 
 from neural_angelo.Model.model import Model
 from neural_angelo.Module.checkpointer import Checkpointer
+
+
+def _calculate_model_size(model):
+    r"""Calculate number of parameters in a PyTorch network.
+
+    Args:
+        model (obj): PyTorch network.
+
+    Returns:
+        (int): Number of parameters.
+    """
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def collate_test_data_batches(data_batches):

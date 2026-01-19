@@ -10,15 +10,14 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 -----------------------------------------------------------------------------
 '''
 
-import importlib
-
 import torch
 import torch.distributed as dist
 
-from imaginaire.utils.distributed import master_only_print as print
+from neural_angelo.Util.distributed import master_only_print as print
 
-from imaginaire.datasets.utils.sampler import DistributedSamplerPreemptable
-from imaginaire.datasets.utils.dataloader import MultiEpochsDataLoader
+from neural_angelo.Data.sampler import DistributedSamplerPreemptable
+from neural_angelo.Dataset.data import Dataset
+from neural_angelo.Data.dataloader import MultiEpochsDataLoader
 
 
 def _get_train_dataset_objects(cfg, subset_indices=None):
@@ -30,8 +29,7 @@ def _get_train_dataset_objects(cfg, subset_indices=None):
     Returns:
         train_dataset (obj): PyTorch training dataset object.
     """
-    dataset_module = importlib.import_module(cfg.data.type)
-    train_dataset = dataset_module.Dataset(cfg, is_inference=False)
+    train_dataset = Dataset(cfg, is_inference=False)
     if subset_indices is not None:
         train_dataset = torch.utils.data.Subset(train_dataset, subset_indices)
     print('Train dataset length:', len(train_dataset))
@@ -46,12 +44,11 @@ def _get_val_dataset_objects(cfg, subset_indices=None):
     Returns:
         val_dataset (obj): PyTorch validation dataset object.
     """
-    dataset_module = importlib.import_module(cfg.data.type)
+    # 注意：如果 cfg.data.val 有 type 属性，会使用其配置覆盖 cfg.data
     if hasattr(cfg.data.val, 'type'):
         for key in ['type', 'input_types', 'input_image']:
             setattr(cfg.data, key, getattr(cfg.data.val, key))
-        dataset_module = importlib.import_module(cfg.data.type)
-    val_dataset = dataset_module.Dataset(cfg, is_inference=True)
+    val_dataset = Dataset(cfg, is_inference=True)
 
     if subset_indices is not None:
         val_dataset = torch.utils.data.Subset(val_dataset, subset_indices)
@@ -68,8 +65,7 @@ def _get_test_dataset_object(cfg, subset_indices=None):
     Returns:
         (obj): PyTorch dataset object.
     """
-    dataset_module = importlib.import_module(cfg.test_data.type)
-    test_dataset = dataset_module.Dataset(cfg, is_inference=True, is_test=True)
+    test_dataset = Dataset(cfg, is_inference=True)
     if subset_indices is not None:
         test_dataset = torch.utils.data.Subset(test_dataset, subset_indices)
     return test_dataset

@@ -16,13 +16,13 @@ import numpy as np
 import torchvision.transforms.functional as torchvision_F
 from PIL import Image, ImageFile
 
-from projects.nerf.datasets import base
-from projects.nerf.utils import camera
+from neural_angelo.Dataset.base import BaseDataset
+from neural_angelo.Util import camera
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
-class Dataset(base.Dataset):
+class Dataset(BaseDataset):
 
     def __init__(self, cfg, is_inference=False):
         super().__init__(cfg, is_inference=is_inference, is_test=False)

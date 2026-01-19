@@ -1,5 +1,4 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
 from neural_angelo.Util.set_random_seed import set_random_seed
 
@@ -27,6 +26,7 @@ def demo():
     checkpoint = data_folder + "na/logs/model_last.pt"
 
     cfg = Config()
+    device = 'cuda:1'
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/"
@@ -47,7 +47,7 @@ def demo():
 
     # 初始化训练器
     print("初始化训练器...")
-    trainer = Trainer(cfg)
+    trainer = Trainer(cfg, device)
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
     print("加载检查点...")

@@ -71,14 +71,16 @@ class Trainer(object):
 
     Args:
         cfg (obj): Global configuration.
+        device (str): 训练设备，默认为 'cuda'。
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, device: str = 'cuda'):
         print('Setup trainer.')
         # 初始化 cuDNN
         init_cudnn(deterministic=False, benchmark=True)
 
         self.cfg = cfg
+        self.device = device
 
         # Create objects for the networks, optimizers, and schedulers.
         self.model = self.setup_model()
@@ -139,7 +141,7 @@ class Trainer(object):
         init_gain = self.cfg.trainer.init.gain or 1.
         model.apply(weights_init(self.cfg.trainer.init.type, init_gain, init_bias))
         model.apply(weights_rescale())
-        model = model.to('cuda')
+        model = model.to(self.device)
         return model
 
     def setup_optimizer(self, model):
@@ -207,7 +209,12 @@ class Trainer(object):
             scaler_kwargs.pop('dtype', None)
             scaler_kwargs.pop('cache_enabled', None)
 
-        self.scaler = GradScaler('cuda', **scaler_kwargs)
+        # Use the device from trainer, extract device type if needed (e.g., 'cuda:0' -> 'cuda')
+        if isinstance(self.device, str):
+            scaler_device = self.device.split(':')[0] if ':' in self.device else self.device
+        else:
+            scaler_device = str(self.device).split(':')[0] if ':' in str(self.device) else str(self.device)
+        self.scaler = GradScaler(scaler_device, **scaler_kwargs)
 
     def init_logging_attributes(self):
         r"""Initialize logging attributes."""
@@ -253,7 +260,7 @@ class Trainer(object):
         r"""Things to do before an iteration."""
         self.current_iteration = current_iteration
         self._update_progress(current_iteration)
-        data = to_cuda(data)
+        data = to_cuda(data, device=self.device)
         self.model.train()
         return data
 
@@ -448,7 +455,7 @@ class Trainer(object):
     def _get_total_loss(self):
         r"""Return the total loss to be backpropagated.
         """
-        total_loss = torch.tensor(0., device=torch.device('cuda'))
+        total_loss = torch.tensor(0., device=self.device)
         # Iterates over all possible losses.
         for loss_name in self.weights:
             if loss_name in self.losses:

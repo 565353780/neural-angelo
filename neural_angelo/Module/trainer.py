@@ -305,7 +305,7 @@ class Trainer(object):
             self.sched.step()
 
         # 日志打印
-        print(f'Epoch: {current_epoch}, iter: {current_iteration}')'
+        print(f'Epoch: {current_epoch}, iter: {current_iteration}')
 
         # TensorBoard scalar 记录
         self.log_tensorboard_scalars(data, mode="train")

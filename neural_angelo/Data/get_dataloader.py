@@ -10,7 +10,7 @@ def _create_dataloader(cfg, is_inference, batch_size, shuffle, drop_last,
     """创建数据加载器的通用函数。"""
     dataset = Dataset(cfg, is_inference=is_inference)
     split_name = "Val" if is_inference else "Train"
-    
+
     # 处理 subset：优先使用传入的 indices，否则根据 subset_size 随机选取
     if subset_indices is None and subset_size is not None:
         dataset_len = len(dataset)
@@ -18,16 +18,16 @@ def _create_dataloader(cfg, is_inference, batch_size, shuffle, drop_last,
         random.seed(seed)
         subset_indices = sorted(random.sample(range(dataset_len), subset_size))
         print(f'{split_name} subset: randomly selected {subset_size} from {dataset_len}')
-    
+
     if subset_indices is not None:
         dataset = torch.utils.data.Subset(dataset, subset_indices)
-    
+
     print(f'{split_name} dataset length: {len(dataset)}')
-    
+
     num_workers = getattr(cfg.data, 'num_workers', 8)
     persistent_workers = num_workers > 0 and getattr(cfg.data, 'persistent_workers', False)
     LoaderClass = MultiEpochsDataLoader if use_multi_epoch_loader else torch.utils.data.DataLoader
-    
+
     return LoaderClass(
         dataset,
         batch_size=batch_size,

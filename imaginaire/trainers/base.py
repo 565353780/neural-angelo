@@ -442,7 +442,7 @@ class BaseTrainer(object):
         r"""Every trainer should implement its own model forward."""
         raise NotImplementedError
 
-    def train(self, cfg, data_loader, single_gpu=False, profile=False, show_pbar=False):
+    def train(self, cfg, data_loader, single_gpu=False, profile=False):
         r"""Generic training loop. Main structure in a nutshell:
             for epoch in [start_epoch, end_epoch]:
                 for batch in dataset (one epoch):
@@ -453,7 +453,6 @@ class BaseTrainer(object):
             data_loader (torch.utils.data.DataLoader): PyTorch dataloader.
             single_gpu (bool): Use only a single GPU.
             profile (bool): Enable profiling.
-            show_pbar (bool): Whether to show the progress bar
         """
         start_epoch = self.checkpointer.resume_epoch or self.current_epoch  # The epoch to start with.
         current_iteration = self.checkpointer.resume_iteration or self.current_iteration  # The starting iteration.
@@ -464,10 +463,7 @@ class BaseTrainer(object):
             if not single_gpu:
                 data_loader.sampler.set_epoch(current_epoch)
             self.start_of_epoch(current_epoch)
-            if show_pbar:
-                data_loader_wrapper = tqdm(data_loader, desc=f"Training epoch {current_epoch + 1}", leave=False)
-            else:
-                data_loader_wrapper = data_loader
+            data_loader_wrapper = tqdm(data_loader, desc=f"Training epoch {current_epoch + 1}", leave=False)
             for it, data in enumerate(data_loader_wrapper):
                 with profiler.profile(enabled=profile,
                                       use_cuda=True,
@@ -478,8 +474,7 @@ class BaseTrainer(object):
                     self.train_step(data, last_iter_in_epoch=(it == len(data_loader) - 1))
 
                     current_iteration += 1
-                    if show_pbar:
-                        data_loader_wrapper.set_postfix(iter=current_iteration)
+                    data_loader_wrapper.set_postfix(iter=current_iteration)
                     if it == len(data_loader) - 1:
                         self.end_of_iteration(data, current_epoch + 1, current_iteration)
                     else:
@@ -494,7 +489,7 @@ class BaseTrainer(object):
             self.end_of_epoch(data, current_epoch + 1, current_iteration)
         print('Done with training!!!')
 
-    def test(self, data_loader, output_dir, inference_args, show_pbar=False):
+    def test(self, data_loader, output_dir, inference_args):
         r"""Compute results images and save the results in the specified folder.
         Args:
             data_loader (torch.utils.data.DataLoader): PyTorch dataloader.

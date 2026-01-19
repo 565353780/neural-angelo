@@ -26,14 +26,14 @@ class Dataset(base.Dataset):
 
     def __init__(self, cfg, is_inference=False, is_test=False):
         super().__init__(cfg, is_inference=is_inference, is_test=is_test)
-        cfg_data = cfg.test_data if self.split == "test" else cfg.data
-        data_info = cfg_data[self.split]
+        cfg_data = cfg.data
+        data_info = cfg_data.train
         self.root = cfg_data.root
         self.preload = cfg_data.preload
-        self.bgcolor = cfg_data.bgcolor
+        self.bgcolor = None
         self.raw_H, self.raw_W = 800, 800
-        self.H, self.W = cfg_data.image_size
-        meta_fname = f"{cfg_data.root}/transforms_{self.split}.json"
+        self.H, self.W = data_info.image_size
+        meta_fname = f"{cfg_data.root}/transforms.json"
         with open(meta_fname) as file:
             self.meta = json.load(file)
         self.focal = 0.5 * self.raw_W / np.tan(0.5 * self.meta["camera_angle_x"])

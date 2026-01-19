@@ -11,8 +11,8 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 '''
 
 import json
-import numpy as np
 import torch
+import numpy as np
 import torchvision.transforms.functional as torchvision_F
 from PIL import Image, ImageFile
 
@@ -34,8 +34,8 @@ class Dataset(base.Dataset):
         with open(meta_fname) as file:
             self.meta = json.load(file)
         self.list = self.meta["frames"]
-        if cfg_data[self.split].subset:
-            subset = cfg_data[self.split].subset
+        if cfg_data.train.subset:
+            subset = cfg_data.train.subset
             subset_idx = np.linspace(0, len(self.list), subset+1)[:-1].astype(int)
             self.list = [self.list[i] for i in subset_idx]
         self.num_rays = cfg.model.render.rand_rays

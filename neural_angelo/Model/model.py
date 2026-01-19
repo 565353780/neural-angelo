@@ -1,30 +1,19 @@
-'''
------------------------------------------------------------------------------
-Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
-
-NVIDIA CORPORATION and its licensors retain all intellectual property
-and proprietary rights in and to this software, related documentation
-and any modifications thereto. Any use, reproduction, disclosure or
-distribution of this software and related documentation without an express
-license agreement from NVIDIA CORPORATION is strictly prohibited.
------------------------------------------------------------------------------
-'''
-
-from functools import partial
 import torch
 import torch.nn.functional as torch_F
+from functools import partial
 from collections import defaultdict
 
-from imaginaire.models.base import Model as BaseModel
 from projects.nerf.utils import nerf_util, camera, render
 from projects.neuralangelo.utils import misc
-from projects.neuralangelo.utils.modules import NeuralSDF, NeuralRGB, BackgroundNeRF
+
+from neural_angelo.Model.neural_sdf import NeuralSDF
+from neural_angelo.Model.neural_rgb import NeuralRGB
+from neural_angelo.Model.background_nerf import BackgroundNeRF
 
 
-class Model(BaseModel):
-
+class Model(torch.nn.Module):
     def __init__(self, cfg_model, cfg_data):
-        super().__init__(cfg_model, cfg_data)
+        super().__init__()
         self.cfg_render = cfg_model.render
         self.white_background = cfg_model.background.white
         self.with_background = cfg_model.background.enabled
@@ -42,6 +31,12 @@ class Model(BaseModel):
         self.sample_dists_from_pdf = partial(nerf_util.sample_dists_from_pdf,
                                              intvs_fine=cfg_model.render.num_samples.fine)
         self.to_full_val_image = partial(misc.to_full_image, image_size=cfg_data.val.image_size)
+
+    def get_param_groups(self):
+        return self.parameters()
+
+    def device(self):
+        return next(self.parameters()).device
 
     def build_model(self, cfg_model, cfg_data):
         # appearance encoding

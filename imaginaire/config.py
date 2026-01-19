@@ -19,7 +19,6 @@ import yaml
 from imaginaire.utils.distributed import master_only_print as print
 from imaginaire.utils.termcolor import cyan, green, yellow
 
-DEBUG = False
 USE_JIT = False
 
 

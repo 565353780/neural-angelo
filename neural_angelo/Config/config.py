@@ -3,8 +3,8 @@ class Config:
     """
 
     # ==================== 基础训练配置 ====================
-    iters_per_epoch: int = 200  # 每个 epoch 的迭代次数
-    max_epoch: int = 2500  # 最大 epoch 数
+    iters_per_epoch: int = 2000  # 每个 epoch 的迭代次数
+    max_epoch: int = 250  # 最大 epoch 数
 
     # ==================== 检查点配置 ====================
     class Checkpoint:

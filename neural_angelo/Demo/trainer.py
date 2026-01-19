@@ -27,6 +27,7 @@ def demo():
 
     cfg = Config()
     device = 'cuda:1'
+    extract_mesh_only = True
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/"
@@ -53,15 +54,26 @@ def demo():
     print("加载检查点...")
     trainer.checkpointer.load(checkpoint)
 
-    # 开始训练
-    print("\n" + "=" * 60)
-    print("开始训练...")
-    print("=" * 60 + "\n")
+    if not extract_mesh_only:
+        # 开始训练
+        print("\n" + "=" * 60)
+        print("开始训练...")
+        print("=" * 60 + "\n")
 
-    trainer.train()
+        trainer.train()
+        trainer.finalize()
 
-    # 结束训练
-    trainer.finalize()
+    # 导出基本网格
+    trainer.exportMeshFile(cfg.logdir + "mesh.ply")
+
+    # 导出高分辨率带纹理的网格，只保留最大连通分量
+    trainer.exportMeshFile(
+        cfg.logdir + "mesh_textured.ply",
+        resolution=1024,
+        block_res=128,
+        textured=True,
+        keep_lcc=False,
+    )
 
     print("\n" + "=" * 60)
     print("训练完成!")

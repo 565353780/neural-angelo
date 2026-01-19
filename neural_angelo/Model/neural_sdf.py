@@ -66,14 +66,15 @@ class NeuralSDF(torch.nn.Module):
 
     def encode(self, points_3D):
         # Tri-linear interpolate the corresponding embeddings from the dictionary.
-        vol_min, vol_max = self.cfg_sdf.encoding.hashgrid.range
-        points_3D_normalized = (points_3D - vol_min) / (vol_max - vol_min)  # Normalize to [0,1].
-        tcnn_input = points_3D_normalized.view(-1, 3)
         # Ensure input is on the same device as the model
         # Get device from MLP parameters (which should be on the same device as tcnn_encoding)
         model_device = next(self.mlp.parameters()).device
-        if tcnn_input.device != model_device:
-            tcnn_input = tcnn_input.to(model_device)
+        if points_3D.device != model_device:
+            points_3D = points_3D.to(model_device)
+        
+        vol_min, vol_max = self.cfg_sdf.encoding.hashgrid.range
+        points_3D_normalized = (points_3D - vol_min) / (vol_max - vol_min)  # Normalize to [0,1].
+        tcnn_input = points_3D_normalized.view(-1, 3)
         tcnn_output = self.tcnn_encoding(tcnn_input)
         points_enc = tcnn_output.view(*points_3D_normalized.shape[:-1], tcnn_output.shape[-1])
         feat_dim = self.cfg_sdf.encoding.hashgrid.dim
@@ -102,6 +103,13 @@ class NeuralSDF(torch.nn.Module):
 
     def compute_gradients(self, x, training=False, sdf=None):
         # Note: hessian is not fully hessian but diagonal elements
+        # Ensure input is on the same device as the model
+        model_device = next(self.mlp.parameters()).device
+        if x.device != model_device:
+            x = x.to(model_device)
+        if sdf is not None and sdf.device != model_device:
+            sdf = sdf.to(model_device)
+        
         if self.cfg_sdf.gradient.taps == 6:
             eps = self.normal_eps
             # 1st-order gradient

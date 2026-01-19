@@ -1,9 +1,12 @@
 import os
+import json
 import torch
 import inspect
+import numpy as np
 import torch.nn.functional as torch_F
 
 from tqdm import tqdm
+from functools import partial
 from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import LambdaLR
@@ -19,9 +22,12 @@ from neural_angelo.Loss.eikonal import eikonal_loss
 from neural_angelo.Loss.curvature import curvature_loss
 from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Method.cudnn import init_cudnn
+from neural_angelo.Method.mesh import extract_mesh_from_sdf, extract_texture
 from neural_angelo.Module.checkpointer import Checkpointer
 from neural_angelo.Module.model_average import ModelAverage
 
+
+# ==================== 训练辅助函数 ====================
 
 def cycle_dataloader(data_loader):
     """创建一个无限循环的数据迭代器，确保数据按顺序循环获取。
@@ -551,3 +557,105 @@ class Trainer(object):
             self.tensorboard_writer.add_image(f"{mode}/vis/normal", tensorboard_image(data["normal_map"], from_range=(-1, 1)), self.current_iteration)
             self.tensorboard_writer.add_image(f"{mode}/vis/inv_depth", tensorboard_image(1 / (data["depth_map"] + 1e-8) * self.cfg.trainer.depth_vis_scale), self.current_iteration)
             self.tensorboard_writer.add_image(f"{mode}/vis/opacity", tensorboard_image(data["opacity_map"]), self.current_iteration)
+
+    @torch.no_grad()
+    def exportMeshFile(
+        self,
+        save_mesh_file_path: str,
+        resolution: int = 512,
+        block_res: int = 64,
+        textured: bool = False,
+        keep_lcc: bool = False
+    ) -> bool:
+        """
+        导出三角网格文件
+
+        Args:
+            save_mesh_file_path: 输出网格文件路径 (如 mesh.ply)
+            resolution: Marching Cubes 分辨率，默认 512
+            block_res: 分块分辨率，默认 64
+            textured: 是否导出带纹理的网格，默认 False
+            keep_lcc: 是否只保留最大连通分量，默认 False
+
+        Returns:
+            bool: 是否成功导出网格
+        """
+        print(f"开始导出网格到: {save_mesh_file_path}")
+
+        # 获取模型（如果使用 EMA，则使用平均模型）
+        if self.cfg.trainer.ema_config.enabled:
+            model = self.model.averaged_model
+        else:
+            model = self.model_module
+        model.eval()
+
+        # 确保 coarse-to-fine 级别正确设置
+        model.neural_sdf.set_active_levels(self.current_iteration)
+        model.neural_sdf.set_normal_epsilon()
+
+        # 读取 transforms.json 获取边界信息
+        meta_fname = f"{self.cfg.data.root}/transforms.json"
+        if os.path.exists(meta_fname):
+            with open(meta_fname) as file:
+                meta = json.load(file)
+
+            if "aabb_range" in meta:
+                bounds = (np.array(meta["aabb_range"]) - np.array(meta["sphere_center"])[..., None]) / meta["sphere_radius"]
+            else:
+                bounds = np.array([[-1.0, 1.0], [-1.0, 1.0], [-1.0, 1.0]])
+
+            sphere_center = np.array(meta.get("sphere_center", [0.0, 0.0, 0.0]))
+            sphere_radius = meta.get("sphere_radius", 1.0)
+        else:
+            print(f"警告: 未找到 {meta_fname}，使用默认边界")
+            bounds = np.array([[-1.0, 1.0], [-1.0, 1.0], [-1.0, 1.0]])
+            sphere_center = np.array([0.0, 0.0, 0.0])
+            sphere_radius = 1.0
+
+        print(f"边界范围: {bounds}")
+
+        # 定义 SDF 函数
+        sdf_func = lambda x: -model.neural_sdf.sdf(x)
+
+        # 定义纹理函数（如果需要）
+        if textured:
+            texture_func = partial(
+                extract_texture,
+                neural_sdf=model.neural_sdf,
+                neural_rgb=model.neural_rgb,
+                appear_embed=model.appear_embed
+            )
+        else:
+            texture_func = None
+
+        # 提取网格
+        print(f"开始提取网格 (分辨率: {resolution}, 分块: {block_res})...")
+        mesh = extract_mesh_from_sdf(
+            sdf_func=sdf_func,
+            bounds=bounds,
+            intv=(2.0 / resolution),
+            block_res=block_res,
+            texture_func=texture_func,
+            filter_lcc=keep_lcc
+        )
+
+        if mesh.vertices.shape[0] > 0:
+            print(f"顶点数: {len(mesh.vertices)}")
+            print(f"面数: {len(mesh.faces)}")
+            if textured and hasattr(mesh.visual, 'vertex_colors'):
+                print(f"颜色数: {len(mesh.visual.vertex_colors)}")
+
+            # 恢复原始坐标
+            mesh.vertices = mesh.vertices * sphere_radius + sphere_center
+            mesh.update_faces(mesh.nondegenerate_faces())
+
+            # 保存网格
+            output_dir = os.path.dirname(save_mesh_file_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            mesh.export(save_mesh_file_path)
+            print(f"网格已保存至: {save_mesh_file_path}")
+            return True
+        else:
+            print("警告: 提取的网格为空!")
+            return False

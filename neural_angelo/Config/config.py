@@ -6,9 +6,6 @@ class Config:
     iters_per_epoch: int = 200  # 每个 epoch 的迭代次数
     max_epoch: int = 2500  # 最大 epoch 数
 
-    speed_benchmark: bool = False
-    timeout_period: int = 9999999  # 超时时间（秒）
-
     # ==================== CUDNN 配置 ====================
     class Cudnn:
         benchmark: bool = True

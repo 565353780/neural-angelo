@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from neural_angelo.Util.init_weight import weights_init, weights_rescale
 from neural_angelo.Util.model_average import ModelAverage
-from neural_angelo.Util.misc import to_cuda, requires_grad, Timer
+from neural_angelo.Util.misc import to_cuda, requires_grad
 from neural_angelo.Util.visualization import tensorboard_image
 from neural_angelo.Util.nerf_misc import eikonal_loss, curvature_loss
 
@@ -24,7 +24,7 @@ from neural_angelo.Module.checkpointer import Checkpointer
 
 def cycle_dataloader(data_loader):
     """创建一个无限循环的数据迭代器，确保数据按顺序循环获取。
-    
+
     每次 data_loader 耗尽时，重新从头开始迭代，保证所有图片都被均匀使用。
     """
     while True:
@@ -93,7 +93,6 @@ class Trainer(object):
         self.init_losses(cfg)
 
         self.checkpointer = Checkpointer(self.model, self.optim, self.sched)
-        self.timer = Timer(cfg)
 
         # 检查点路径设置
         self.checkpoint_path_last = os.path.join(cfg.logdir, 'model_last.pt')
@@ -233,8 +232,6 @@ class Trainer(object):
         self.start_iteration_time = None
         self.start_epoch_time = None
         self.elapsed_iteration_time = 0
-        if self.cfg.speed_benchmark:
-            self.timer.reset()
 
     def load_checkpoint(self, checkpoint_path=None, load_opt=True, load_sch=True):
         """加载检查点以恢复训练或进行推理。
@@ -313,20 +310,16 @@ class Trainer(object):
         # 更新 scheduler（epoch mode）
         if not self.cfg.optim.sched.iteration_mode:
             self.sched.step()
-        
+
         elapsed_epoch_time = time.time() - self.start_epoch_time
-        self.timer.time_epoch = elapsed_epoch_time
-        
+
         # 计算平均迭代时间
         avg_time = self.elapsed_iteration_time / self.iters_per_epoch
-        self.timer.time_iteration = avg_time
         self.elapsed_iteration_time = 0
 
         # 日志打印
         print(f'Epoch: {current_epoch}, iter: {current_iteration}, '
                 f'epoch time: {elapsed_epoch_time:.2f}s, avg iter time: {avg_time:.4f}s')
-        if self.cfg.speed_benchmark:
-            self.timer._print_speed_benchmark(avg_time)
 
         # TensorBoard scalar 记录
         self.log_tensorboard_scalars(data, mode="train")
@@ -375,9 +368,6 @@ class Trainer(object):
         # Set requires_grad flags.
         requires_grad(self.model_module, True)
 
-        # Compute the loss.
-        self.timer._time_before_forward()
-
         autocast_dtype = getattr(self.cfg.trainer.amp_config, 'dtype', 'float16')
         autocast_dtype = torch.bfloat16 if autocast_dtype == 'bfloat16' else torch.float16
         amp_kwargs = {
@@ -390,31 +380,26 @@ class Trainer(object):
             total_loss = total_loss / float(self.cfg.trainer.grad_accum_iter)
 
         # Backpropagate the loss.
-        self.timer._time_before_backward()
         self.scaler.scale(total_loss).backward()
 
         # Perform an optimizer step. This enables gradient accumulation when grad_accum_iter is not 1.
         if (self.current_iteration + 1) % self.cfg.trainer.grad_accum_iter == 0 or last_iter_in_epoch:
-            self.timer._time_before_step()
             self.scaler.step(self.optim)
             self.scaler.update()
             # Zero out the gradients.
             self.optim.zero_grad(**self.optim_zero_grad_kwargs)
 
         # Update model average.
-        self.timer._time_before_model_avg()
         if self.cfg.trainer.ema_config.enabled:
             self.model.update_average()
 
         self._detach_losses()
-        self.timer._time_before_leave_gen()
 
     def model_forward(self, data):
         # Model forward.
         output = self.model(data)
         data.update(output)
         # Compute loss.
-        self.timer._time_before_loss()
         self._compute_loss(data, mode="train")
         total_loss = self._get_total_loss()
         return total_loss
@@ -564,8 +549,6 @@ class Trainer(object):
         # Log scalars (basic info & losses).
         if mode == "train":
             self.tensorboard_writer.add_scalar("optim/lr", self.sched.get_last_lr()[0], self.current_iteration)
-            self.tensorboard_writer.add_scalar("time/iteration", self.timer.time_iteration, self.current_iteration)
-            self.tensorboard_writer.add_scalar("time/epoch", self.timer.time_epoch, self.current_iteration)
         for key, value in self.losses.items():
             if isinstance(value, torch.Tensor):
                 self.tensorboard_writer.add_scalar(f"{mode}/loss/{key}", value.item() if value.numel() == 1 else value.mean().item(), self.current_iteration)

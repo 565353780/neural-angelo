@@ -6,13 +6,6 @@ class Config:
     iters_per_epoch: int = 200  # 每个 epoch 的迭代次数
     max_epoch: int = 2500  # 最大 epoch 数
 
-    # ==================== CUDNN 配置 ====================
-    class Cudnn:
-        benchmark: bool = True
-        deterministic: bool = False
-
-    cudnn = Cudnn()
-
     # ==================== 检查点配置 ====================
     class Checkpoint:
         strict_resume: bool = True  # 严格模式加载 state_dict

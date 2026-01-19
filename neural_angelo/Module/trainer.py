@@ -19,6 +19,7 @@ from neural_angelo.Model.model import Model
 from neural_angelo.Loss.eikonal import eikonal_loss
 from neural_angelo.Loss.curvature import curvature_loss
 from neural_angelo.Method.time import getCurrentTime
+from neural_angelo.Method.cudnn import init_cudnn
 from neural_angelo.Module.checkpointer import Checkpointer
 
 
@@ -70,38 +71,31 @@ class Trainer(object):
 
     Args:
         cfg (obj): Global configuration.
-        is_inference (bool): if True, load the test dataloader and run in inference mode.
     """
 
-    def __init__(self, cfg, is_inference=True):
+    def __init__(self, cfg):
         print('Setup trainer.')
+        # 初始化 cuDNN
+        init_cudnn(deterministic=False, benchmark=True)
+
         self.cfg = cfg
+
         # Create objects for the networks, optimizers, and schedulers.
-        self.model = self.setup_model(cfg)
-        if not is_inference:
-            self.optim = self.setup_optimizer(cfg, self.model)
-            self.sched = self.setup_scheduler(cfg, self.optim)
-        else:
-            self.optim = None
-            self.sched = None
-        self.model = self.wrap_model(cfg, self.model)
-        # Data loaders & inference mode.
-        self.is_inference = is_inference
+        self.model = self.setup_model()
+        self.optim = self.setup_optimizer(self.model)
+        self.sched = self.setup_scheduler(self.optim)
+        self.model = self.wrap_model(self.model)
         # Initialize automatic mixed precision training.
         self.init_amp()
         # Initialize loss functions.
-        self.init_losses(cfg)
+        self.init_losses()
 
         self.checkpointer = Checkpointer(self.model, self.optim, self.sched)
 
         # 检查点路径设置
-        self.checkpoint_path_last = os.path.join(cfg.logdir, 'model_last.pt')
-        self.checkpoint_path_best = os.path.join(cfg.logdir, 'model_best.pt')
+        self.checkpoint_path_last = os.path.join(self.cfg.logdir, 'model_last.pt')
+        self.checkpoint_path_best = os.path.join(self.cfg.logdir, 'model_best.pt')
         self.best_psnr = float('-inf')  # 追踪最佳PSNR
-
-        # -------- The initialization steps below can be skipped during inference. --------
-        if self.is_inference:
-            return
 
         # Initialize logging attributes.
         self.init_logging_attributes()
@@ -110,59 +104,49 @@ class Trainer(object):
 
         # Trainer-specific initialization
         self.metrics = dict()
-        
+
         # 每个 epoch 的迭代次数
-        self.iters_per_epoch = cfg.iters_per_epoch
+        self.iters_per_epoch = self.cfg.iters_per_epoch
 
-        self.warm_up_end = cfg.optim.sched.warm_up_end
-        self.cfg_gradient = cfg.model.object.sdf.gradient
+        self.warm_up_end = self.cfg.optim.sched.warm_up_end
+        self.cfg_gradient = self.cfg.model.object.sdf.gradient
 
-        self.c2f_step = cfg.model.object.sdf.encoding.coarse2fine.step
+        self.c2f_step = self.cfg.model.object.sdf.encoding.coarse2fine.step
         self.model_module.neural_sdf.warm_up_end = self.warm_up_end
 
         self.criteria["render"] = torch.nn.L1Loss()
 
         self.mode = 'train'
+
+        self.train_data_loader = get_train_dataloader(self.cfg, shuffle=True)
+        self.eval_data_loader = get_val_dataloader(self.cfg)
+
+        self.init_tensorboard(self.cfg.logdir)
         return
 
-    def set_data_loader(self, cfg, split, shuffle=True):
-        """Set the data loader corresponding to the indicated split.
-        Args:
-            split (str): Must be either 'train', 'val', or 'test'.
-            shuffle (bool): Whether to shuffle the data (only applies to the training set).
-        """
-        assert (split in ["train", "val", "test"])
-        if split == "train":
-            self.train_data_loader = get_train_dataloader(cfg, shuffle=shuffle)
-        elif split == "val":
-            self.eval_data_loader = get_val_dataloader(cfg)
-
-    def setup_model(self, cfg):
+    def setup_model(self):
         r"""Return the networks.
         will wrap the network with a moving average model if applicable.
 
         The following objects are constructed as class members:
           - model (obj): Model object (historically: generator network object).
-
-        Args:
-            cfg (obj): Global configuration.
         """
         # Construct networks
-        model = Model(cfg.model, cfg.data)
+        model = Model(self.cfg.model, self.cfg.data)
         print('model parameter count: {:,}'.format(_calculate_model_size(model)))
-        print(f'Initialize model weights using type: {cfg.trainer.init.type}, gain: {cfg.trainer.init.gain}')
-        init_bias = getattr(cfg.trainer.init, 'bias', None)
-        init_gain = cfg.trainer.init.gain or 1.
-        model.apply(weights_init(cfg.trainer.init.type, init_gain, init_bias))
+        print(f'Initialize model weights using type: {self.cfg.trainer.init.type}, gain: {self.cfg.trainer.init.gain}')
+        init_bias = getattr(self.cfg.trainer.init, 'bias', None)
+        init_gain = self.cfg.trainer.init.gain or 1.
+        model.apply(weights_init(self.cfg.trainer.init.type, init_gain, init_bias))
         model.apply(weights_rescale())
         model = model.to('cuda')
         return model
 
-    def setup_optimizer(self, cfg, model):
+    def setup_optimizer(self, model):
         optim = AdamW(
             params=model.parameters(),
-            lr=cfg.optim.params.lr,
-            weight_decay=cfg.optim.params.weight_decay,
+            lr=self.cfg.optim.params.lr,
+            weight_decay=self.cfg.optim.params.weight_decay,
         )
 
         self.optim_zero_grad_kwargs = {}
@@ -170,10 +154,10 @@ class Trainer(object):
             self.optim_zero_grad_kwargs['set_to_none'] = True
         return optim
 
-    def setup_scheduler(self, cfg, optim):
-        warm_up_end = cfg.optim.sched.warm_up_end
-        two_steps = cfg.optim.sched.two_steps
-        gamma = cfg.optim.sched.gamma
+    def setup_scheduler(self, optim):
+        warm_up_end = self.cfg.optim.sched.warm_up_end
+        two_steps = self.cfg.optim.sched.two_steps
+        gamma = self.cfg.optim.sched.gamma
 
         def sch(x):
             if x < warm_up_end:
@@ -188,12 +172,12 @@ class Trainer(object):
 
         return LambdaLR(optim, lambda x: sch(x))
 
-    def wrap_model(self, cfg, model):
+    def wrap_model(self, model):
         # 使用指数移动平均（EMA）包装模型
-        if cfg.trainer.ema_config.enabled:
+        if self.cfg.trainer.ema_config.enabled:
             model = ModelAverage(model,
-                                cfg.trainer.ema_config.beta,
-                                cfg.trainer.ema_config.start_iteration)
+                                self.cfg.trainer.ema_config.beta,
+                                self.cfg.trainer.ema_config.start_iteration)
             self.model_module = model.module
         else:
             self.model_module = model
@@ -250,13 +234,9 @@ class Trainer(object):
             strict_resume=self.cfg.checkpoint.strict_resume
         )
 
-    def init_tensorboard(self, cfg, enabled: bool=True) -> bool:
-        self.tensorboard_writer = None
-        if not enabled:
-            return True
-
+    def init_tensorboard(self, logdir: str) -> bool:
         print('Initialize TensorBoard')
-        tensorboard_dir = os.path.join(cfg.logdir, getCurrentTime())
+        tensorboard_dir = os.path.join(logdir, getCurrentTime())
         os.makedirs(tensorboard_dir, exist_ok=True)
         self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_dir)
         return True
@@ -312,7 +292,7 @@ class Trainer(object):
         self.log_tensorboard_scalars(data, mode="train")
         # Exit if the training loss has gone to NaN/inf.
         if self.losses["total"].isnan() or self.losses["total"].isinf():
-            self.finalize(self.cfg)
+            self.finalize()
             raise ValueError("Training loss has gone to NaN or infinity!!!")
 
         # 验证和 TensorBoard 图像记录
@@ -389,7 +369,7 @@ class Trainer(object):
         total_loss = self._get_total_loss()
         return total_loss
 
-    def train(self, cfg, data_loader):
+    def train(self):
         """训练主循环。
 
         使用基于 epoch 的训练方式，每个 epoch 包含 iters_per_epoch 次迭代。
@@ -400,24 +380,24 @@ class Trainer(object):
         current_iteration = self.checkpointer.resume_iteration or self.current_iteration
         self.current_epoch = start_epoch
         self.current_iteration = current_iteration
-        max_iter = cfg.max_epoch * self.iters_per_epoch
+        max_iter = self.cfg.max_epoch * self.iters_per_epoch
         self.progress = self.model_module.progress = current_iteration / max_iter
 
         # Initial validation
         data_all = self.test(self.eval_data_loader, mode="val")
         self.log_tensorboard_scalars(data_all, mode="val")
-        self.log_tensorboard_images(data_all, mode="val", max_samples=cfg.data.val.max_viz_samples)
+        self.log_tensorboard_images(data_all, mode="val", max_samples=self.cfg.data.val.max_viz_samples)
         self._save_best_model_if_needed(start_epoch, current_iteration)
 
         # 创建循环数据迭代器，确保数据按顺序循环获取
-        data_iter = cycle_dataloader(data_loader)
+        data_iter = cycle_dataloader(self.train_data_loader)
 
-        for current_epoch in range(start_epoch, cfg.max_epoch):
+        for current_epoch in range(start_epoch, self.cfg.max_epoch):
             self.start_of_epoch(current_epoch)
 
             # 使用 tqdm 显示 epoch 内的迭代进度
             epoch_pbar = tqdm(range(self.iters_per_epoch), 
-                            desc=f"Epoch {current_epoch + 1}/{cfg.max_epoch}", 
+                            desc=f"Epoch {current_epoch + 1}/{self.cfg.max_epoch}", 
                             leave=False)
 
             for it in epoch_pbar:
@@ -438,7 +418,7 @@ class Trainer(object):
             self.end_of_epoch(data, current_epoch + 1, current_iteration)
 
         # 训练结束，保存最终模型
-        self.checkpointer.save(self.checkpoint_path_last, cfg.max_epoch, current_iteration)
+        self.checkpointer.save(self.checkpoint_path_last, self.cfg.max_epoch, current_iteration)
         print('Done with training!!!')
 
     @torch.no_grad()
@@ -482,19 +462,19 @@ class Trainer(object):
         for loss_name in self.losses:
             self.losses[loss_name] = self.losses[loss_name].detach()
 
-    def finalize(self, cfg):
+    def finalize(self):
         # Finish the TensorBoard logger.
         if hasattr(self, 'tensorboard_writer') and self.tensorboard_writer is not None:
             self.tensorboard_writer.close()
 
-    def init_losses(self, cfg):
+    def init_losses(self):
         r"""Initialize loss functions."""
         self.losses = dict()
         self.criteria = torch.nn.ModuleDict()
         self.weights = dict()
 
         # Extract loss weights from config (supports both dict and class formats)
-        loss_weight_obj = cfg.trainer.loss_weight
+        loss_weight_obj = self.cfg.trainer.loss_weight
         if hasattr(loss_weight_obj, 'items'):
             self.weights = {k: v for k, v in loss_weight_obj.items() if v}
         else:

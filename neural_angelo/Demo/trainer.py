@@ -1,7 +1,6 @@
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 
-from neural_angelo.Util.cudnn import init_cudnn
 from neural_angelo.Util.set_random_seed import set_random_seed
 
 from neural_angelo.Config.config import Config
@@ -37,9 +36,6 @@ def demo():
     # 设置随机种子
     set_random_seed(0)
 
-    # 初始化 cuDNN
-    init_cudnn(deterministic=False, benchmark=True)
-
     # 打印关键配置
     print("\n关键配置:")
     print(f"  - 数据集路径: {cfg.data.root}")
@@ -51,36 +47,21 @@ def demo():
 
     # 初始化训练器
     print("初始化训练器...")
-    trainer = Trainer(cfg, is_inference=False)
-
-    # 设置数据加载器
-    print("设置数据加载器...")
-    trainer.set_data_loader(cfg, split="train")
-    trainer.set_data_loader(cfg, split="val")
+    trainer = Trainer(cfg)
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
     print("加载检查点...")
-    trainer.checkpointer.load(
-        checkpoint_path=checkpoint,
-        load_sch=True,
-        load_opt=True
-    )
-
-    # 初始化 TensorBoard
-    trainer.init_tensorboard(cfg, enabled=True)
+    trainer.checkpointer.load(checkpoint)
 
     # 开始训练
     print("\n" + "=" * 60)
     print("开始训练...")
     print("=" * 60 + "\n")
 
-    trainer.train(
-        cfg,
-        trainer.train_data_loader,
-    )
+    trainer.train()
 
     # 结束训练
-    trainer.finalize(cfg)
+    trainer.finalize()
 
     print("\n" + "=" * 60)
     print("训练完成!")

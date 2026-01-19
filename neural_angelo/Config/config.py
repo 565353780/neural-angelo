@@ -10,13 +10,10 @@ class Config:
     max_epoch: int = 9999999999  # 最大 epoch 数
     tensorboard_scalar_iter: int = 100
     tensorboard_image_iter: int = 100
-    image_save_iter: int = 200  # 图像保存迭代频率
     validation_iter: int = 1000
     validation_epoch: int = 9999999999999  # 禁用基于 epoch 的验证
     speed_benchmark: bool = False
     timeout_period: int = 9999999  # 超时时间（秒）
-    nvtx_profile: bool = False  # NVTX 性能分析
-    pretrained_weight: str = None  # 预训练权重路径
     
     # 指标计算频率（如果为 None，则从 checkpoint 配置复制）
     metrics_iter: int = None
@@ -41,24 +38,16 @@ class Config:
     
     # ==================== 训练器配置 ====================
     class Trainer:
-        type: str = "projects.neuralangelo.trainer"
         depth_vis_scale: float = 0.5
         grad_accum_iter: int = 1  # 梯度累积迭代次数
-        image_to_tensorboard: bool = True  # 是否将图像写入 TensorBoard
+        allow_tf32: bool = True  # 是否允许 TF32 运算
         
         class EMAConfig:
             enabled: bool = False
-            load_ema_checkpoint: bool = False
             beta: float = 0.9999  # EMA 衰减系数
             start_iteration: int = 0  # 开始 EMA 的迭代次数
         
         ema_config = EMAConfig()
-        
-        class DDPConfig:
-            find_unused_parameters: bool = False
-            static_graph: bool = True
-        
-        ddp_config = DDPConfig()
         
         class LossWeight:
             render: float = 1.0
@@ -75,6 +64,7 @@ class Config:
         
         class AMPConfig:
             enabled: bool = False
+            dtype: str = "float16"  # float16 或 bfloat16
             init_scale: float = 65536.0
             growth_factor: float = 2.0
             backoff_factor: float = 0.5
@@ -86,8 +76,6 @@ class Config:
     
     # ==================== 模型配置 ====================
     class Model:
-        type: str = "projects.neuralangelo.model"
-        
         class Object:
             class SDF:
                 class MLP:
@@ -222,9 +210,6 @@ class Config:
     
     # ==================== 优化器配置 ====================
     class Optim:
-        type: str = "AdamW"
-        fused_opt: bool = False  # 是否使用融合优化器
-        
         class Params:
             lr: float = 1e-3
             weight_decay: float = 1e-2
@@ -233,10 +218,8 @@ class Config:
         
         class Sched:
             iteration_mode: bool = True
-            type: str = "two_steps_with_warmup"
             warm_up_end: int = 5000
             two_steps: list = [300000, 400000]
-            step_size: int = 9999999999  # 步进大小
             gamma: float = 10.0
         
         sched = Sched()
@@ -246,12 +229,11 @@ class Config:
     # ==================== 数据配置 ====================
     class Data:
         name: str = "dummy"  # 数据集名称
-        type: str = "projects.neuralangelo.data"
         root: str = "datasets/nerf-synthetic/lego"
         use_multi_epoch_loader: bool = True
         num_workers: int = 4
         preload: bool = True
-        num_images: int = None  # 训练图像数量
+        num_images: int = None  # 训练图像数量（用于 appearance embedding）
 
         class Train:
             image_size: list = [1024, 1024]
@@ -275,26 +257,9 @@ class Config:
         readjust = Readjust()
 
     data = Data()
-    
-    # ==================== 测试数据配置 ====================
-    class TestData:
-        name: str = "dummy"
-        num_workers: int = 0
-        type: str = "imaginaire.datasets.images"
-        
-        class Test:
-            batch_size: int = 1
-            is_lmdb: bool = False
-            roots: str = None
-        
-        test = Test()
-    
-    test_data = TestData()
 
     # 动态属性（在运行时设置）
     logdir = None
-    local_rank: int = 0  # 本地 GPU rank
-    inference_args: dict = {}  # 推理参数
     
     def setdefault(self, key: str, value):
         """设置默认值，如果属性不存在则创建"""

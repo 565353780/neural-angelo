@@ -49,7 +49,6 @@ def demo():
 
     # 打印关键配置
     print("\n关键配置:")
-    print(f"  - 数据集类型: {cfg.data.type}")
     print(f"  - 数据集路径: {cfg.data.root}")
     print(f"  - 最大迭代次数: {cfg.max_iter}")
     print(f"  - 训练批量大小: {cfg.data.train.batch_size}")

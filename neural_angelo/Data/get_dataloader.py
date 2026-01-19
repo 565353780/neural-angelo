@@ -145,9 +145,6 @@ def get_val_dataloader(cfg, subset_indices=None, seed=0):
     """
     val_dataset = _get_val_dataset_objects(cfg, subset_indices=subset_indices)
     not_distributed = getattr(cfg.data, 'val_data_loader_not_distributed', False)
-    # We often use a folder of images to represent a video. As doing evaluation, we like the images to preserve the
-    # original order. As a result, we do not want to distribute images from the same video to different GPUs.
-    not_distributed = 'video' in cfg.data.type or not_distributed
     drop_last = getattr(cfg.data.val, 'drop_last', False)
     # Validation loader need not have preemption handling.
     val_data_loader = _get_data_loader(
@@ -168,10 +165,8 @@ def get_test_dataloader(cfg, subset_indices=None):
         (obj): Test data loader. It may not contain the ground truth.
     """
     test_dataset = _get_test_dataset_object(cfg, subset_indices=subset_indices)
-    not_distributed = getattr(
-        cfg.test_data, 'val_data_loader_not_distributed', False)
-    not_distributed = 'video' in cfg.test_data.type or not_distributed
+    not_distributed = getattr(cfg.data, 'val_data_loader_not_distributed', False)
     test_data_loader = _get_data_loader(
-        cfg, test_dataset, cfg.test_data.test.batch_size, not_distributed=not_distributed,
+        cfg, test_dataset, cfg.data.val.batch_size, not_distributed=not_distributed,
         shuffle=False)
     return test_data_loader

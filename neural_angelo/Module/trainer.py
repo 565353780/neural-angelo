@@ -1,13 +1,12 @@
 import os
-import time
 import torch
 import inspect
 import torch.nn.functional as torch_F
 
 from tqdm import tqdm
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import LambdaLR
 from torch.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from neural_angelo.Util.init_weight import weights_init, weights_rescale
@@ -64,7 +63,7 @@ def trim_test_samples(data, max_samples=None):
 
 class Trainer(object):
     r"""Trainer class for Neuralangelo training.
-    
+
     训练循环基于 epoch，每个 epoch 包含 cfg.iters_per_epoch 次迭代。
     所有保存、验证、日志记录操作都在 epoch 结束时统一进行。
 
@@ -229,9 +228,6 @@ class Trainer(object):
         r"""Initialize logging attributes."""
         self.current_iteration = 0
         self.current_epoch = 0
-        self.start_iteration_time = None
-        self.start_epoch_time = None
-        self.elapsed_iteration_time = 0
 
     def load_checkpoint(self, checkpoint_path=None, load_opt=True, load_sch=True):
         """加载检查点以恢复训练或进行推理。
@@ -271,7 +267,6 @@ class Trainer(object):
             current_epoch (int): Current number of epoch.
         """
         self.current_epoch = current_epoch
-        self.start_epoch_time = time.time()
 
     def start_of_iteration(self, data, current_iteration):
         r"""Things to do before an iteration."""
@@ -279,7 +274,6 @@ class Trainer(object):
         self._update_progress(current_iteration)
         data = to_cuda(data)
         self.model.train()
-        self.start_iteration_time = time.time()
         return data
 
     def end_of_iteration(self, current_iteration):
@@ -289,7 +283,6 @@ class Trainer(object):
             current_iteration (int): Current number of iteration.
         """
         self.current_iteration = current_iteration
-        self.elapsed_iteration_time += time.time() - self.start_iteration_time
         # 每次迭代后更新 scheduler（iteration mode）
         if self.cfg.optim.sched.iteration_mode:
             self.sched.step()
@@ -306,20 +299,13 @@ class Trainer(object):
         """
         self.current_epoch = current_epoch
         self.current_iteration = current_iteration
-        
+
         # 更新 scheduler（epoch mode）
         if not self.cfg.optim.sched.iteration_mode:
             self.sched.step()
 
-        elapsed_epoch_time = time.time() - self.start_epoch_time
-
-        # 计算平均迭代时间
-        avg_time = self.elapsed_iteration_time / self.iters_per_epoch
-        self.elapsed_iteration_time = 0
-
         # 日志打印
-        print(f'Epoch: {current_epoch}, iter: {current_iteration}, '
-                f'epoch time: {elapsed_epoch_time:.2f}s, avg iter time: {avg_time:.4f}s')
+        print(f'Epoch: {current_epoch}, iter: {current_iteration}')'
 
         # TensorBoard scalar 记录
         self.log_tensorboard_scalars(data, mode="train")

@@ -51,17 +51,22 @@ def demo():
     trainer = Trainer(cfg, device)
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
-    print("加载检查点...")
-    trainer.checkpointer.load(checkpoint)
+    # print("加载检查点...")
+    # trainer.checkpointer.load(checkpoint)
 
     # 开始训练
     print("\n" + "=" * 60)
     print("开始训练...")
     print("=" * 60 + "\n")
 
-    trainer.fitMeshFileSDF(gen_mesh_file_path)
+    trainer.fitMeshFileAll(
+        mesh_file_path=gen_mesh_file_path,
+        sdf_sample_point_num=2048,
+        sdf_lr=1e-3,
+        sdf_patience=50,
+    )
 
-    trainer.train()
+    # trainer.train()
 
     # 结束训练
     trainer.finalize()

@@ -22,6 +22,8 @@ class Model(torch.nn.Module):
         self.outside_val = 1000. * (-1 if cfg_model.object.sdf.mlp.inside_out else 1)
         self.image_size_train = cfg_data.train.image_size
         self.image_size_val = cfg_data.val.image_size
+        # 初始化训练进度（用于 NeuS 退火策略，会在训练器中更新）
+        self.progress = 0.
         # Define models.
         self.build_model(cfg_model, cfg_data)
         # Define functions.
@@ -227,7 +229,8 @@ class Model(torch.nn.Module):
     @torch.no_grad()
     def sample_dists_all(self, center, ray_unit, near, far, stratified=False):
         dists = nerf_util.sample_dists(ray_unit.shape[:2], dist_range=(near[..., None], far[..., None]),
-                                       intvs=self.cfg_render.num_samples.coarse, stratified=stratified)
+                                       intvs=self.cfg_render.num_samples.coarse, stratified=stratified,
+                                       device=ray_unit.device)
         if self.cfg_render.num_sample_hierarchy > 0:
             points = camera.get_3D_points_from_dist(center, ray_unit, dists)  # [B,R,N,3]
             sdfs = self.neural_sdf.sdf(points)  # [B,R,N]
@@ -263,7 +266,8 @@ class Model(torch.nn.Module):
 
     def sample_dists_background(self, ray_unit, far, stratified=False, eps=1e-5):
         inv_dists = nerf_util.sample_dists(ray_unit.shape[:2], dist_range=(1, 0),
-                                           intvs=self.cfg_render.num_samples.background, stratified=stratified)
+                                           intvs=self.cfg_render.num_samples.background, stratified=stratified,
+                                           device=ray_unit.device)
         dists = far[..., None] / (inv_dists + eps)  # [B,R,N,1]
         return dists
 

@@ -20,12 +20,14 @@ class ModelAverage(nn.Module):
         super(ModelAverage, self).__init__()
 
         self.module = module
+        # Get the device from the module
+        module_device = next(module.parameters()).device
         # A shallow copy creates a new object which stores the reference of
         # the original elements.
         # A deep copy creates a new object and recursively adds the copies of
         # nested objects present in the original elements.
-        self._averaged_model = copy.deepcopy(self.module).to('cuda')
-        self.stream = torch.cuda.Stream()
+        self._averaged_model = copy.deepcopy(self.module).to(module_device)
+        self.stream = torch.cuda.Stream(device=module_device)
 
         self.beta = beta
 
@@ -35,7 +37,7 @@ class ModelAverage(nn.Module):
         # the averaging after.
         self.register_buffer('num_updates_tracked',
                              torch.tensor(0, dtype=torch.long))
-        self.num_updates_tracked = self.num_updates_tracked.to('cuda')
+        self.num_updates_tracked = self.num_updates_tracked.to(module_device)
         self.averaged_model.eval()
 
         # Averaged model does not require grad.
@@ -53,7 +55,9 @@ class ModelAverage(nn.Module):
     @torch.no_grad()
     def update_average(self):
         r"""Update the moving average."""
-        self.stream.wait_stream(torch.cuda.current_stream())
+        module_device = next(self.module.parameters()).device
+        current_stream = torch.cuda.current_stream(device=module_device)
+        self.stream.wait_stream(current_stream)
         with torch.cuda.stream(self.stream):
             self.num_updates_tracked += 1
             if self.num_updates_tracked <= self.start_iteration:

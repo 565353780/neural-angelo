@@ -13,6 +13,13 @@ class NeuralSDF(torch.nn.Module):
         encoding_dim = self.build_encoding(cfg_sdf.encoding)
         input_dim = 3 + encoding_dim
         self.build_mlp(cfg_sdf.mlp, input_dim=input_dim)
+        # 初始化 coarse-to-fine 相关属性
+        self.warm_up_end = 0  # 会在训练器中被更新
+        init_level = cfg_sdf.encoding.coarse2fine.init_active_level
+        self.anneal_levels = init_level
+        self.active_levels = init_level
+        # 初始化 normal epsilon（基于初始 active level 的分辨率）
+        self.normal_eps = 1.0 / self.resolutions[init_level - 1]
 
     def build_encoding(self, cfg_encoding):
         # Build the multi-resolution hash grid.
@@ -62,6 +69,11 @@ class NeuralSDF(torch.nn.Module):
         vol_min, vol_max = self.cfg_sdf.encoding.hashgrid.range
         points_3D_normalized = (points_3D - vol_min) / (vol_max - vol_min)  # Normalize to [0,1].
         tcnn_input = points_3D_normalized.view(-1, 3)
+        # Ensure input is on the same device as the model
+        # Get device from MLP parameters (which should be on the same device as tcnn_encoding)
+        model_device = next(self.mlp.parameters()).device
+        if tcnn_input.device != model_device:
+            tcnn_input = tcnn_input.to(model_device)
         tcnn_output = self.tcnn_encoding(tcnn_input)
         points_enc = tcnn_output.view(*points_3D_normalized.shape[:-1], tcnn_output.shape[-1])
         feat_dim = self.cfg_sdf.encoding.hashgrid.dim

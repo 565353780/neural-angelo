@@ -36,13 +36,16 @@ def to_device(data, device):
         return data
 
 
-def to_cuda(data):
+def to_cuda(data, device=None):
     """将数据中的所有张量移动到 GPU。
 
     Args:
         data (dict, list, or tensor): 输入数据。
+        device (str or torch.device, optional): 目标设备。如果为 None，则使用 'cuda'。
     """
-    return to_device(data, 'cuda')
+    if device is None:
+        device = 'cuda'
+    return to_device(data, device)
 
 
 def to_cpu(data):

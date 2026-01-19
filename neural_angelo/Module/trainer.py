@@ -15,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 from neural_angelo.Util.init_weight import weights_init, weights_rescale
 from neural_angelo.Util.misc import to_cuda, requires_grad
 from neural_angelo.Util.visualization import tensorboard_image
+from neural_angelo.Util import nerf_util, render
 
 from neural_angelo.Dataset.dataloader import get_train_dataloader, get_val_dataloader
 from neural_angelo.Model.model import Model
@@ -226,6 +227,117 @@ class Trainer(object):
 
         return LambdaLR(optim, lambda x: sch(x))
 
+    def _get_trainable_params(self, freeze_sdf: bool = False):
+        """根据 freeze_sdf 参数获取可训练的参数列表。
+
+        Args:
+            freeze_sdf: 是否冻结 SDF 网络参数。
+                - False: 返回所有模型参数（正常训练模式）
+                - True: 冻结 SDF 参数，只返回 RGB 相关网络参数
+
+        Returns:
+            list: 可训练参数列表
+        """
+        if not freeze_sdf:
+            # 训练所有参数
+            return list(self.model.parameters())
+
+        # 冻结 SDF，只训练 RGB 相关网络
+        neural_sdf = self.model_module.neural_sdf
+        neural_rgb = self.model_module.neural_rgb
+        background_nerf = self.model_module.background_nerf
+
+        # 冻结 SDF 参数
+        for param in neural_sdf.parameters():
+            param.requires_grad = False
+        neural_sdf.eval()
+
+        # 确保 RGB 相关网络可训练
+        neural_rgb.train()
+        rgb_params = list(neural_rgb.parameters())
+
+        if background_nerf is not None:
+            background_nerf.train()
+            rgb_params.extend(background_nerf.parameters())
+
+        # 也训练 s_var（SDF 转 alpha 的参数）
+        rgb_params.append(self.model_module.s_var)
+
+        # 如果有 appearance embedding，也加入训练
+        if self.model_module.appear_embed is not None:
+            rgb_params.extend(self.model_module.appear_embed.parameters())
+        if self.model_module.appear_embed_outside is not None:
+            rgb_params.extend(self.model_module.appear_embed_outside.parameters())
+
+        frozen_count = sum(p.numel() for p in neural_sdf.parameters())
+        trainable_count = sum(p.numel() for p in rgb_params if p.requires_grad)
+        print(f'[INFO] freeze_sdf=True: Trainable params: {trainable_count:,}, Frozen SDF params: {frozen_count:,}')
+
+        return rgb_params
+
+    def _setup_optimizer_for_train(self, params, freeze_sdf: bool = False):
+        """为 train() 创建优化器。
+
+        Args:
+            params: 要优化的参数列表
+            freeze_sdf: 是否冻结 SDF（影响学习率等配置）
+
+        Returns:
+            AdamW: 优化器实例
+        """
+        if freeze_sdf:
+            # 冻结 SDF 时使用独立配置
+            optim = AdamW(
+                params=params,
+                lr=1e-4,
+                weight_decay=1e-6,
+            )
+        else:
+            # 正常训练使用配置文件中的参数
+            optim = AdamW(
+                params=params,
+                lr=self.cfg.optim.params.lr,
+                weight_decay=self.cfg.optim.params.weight_decay,
+            )
+
+        self.optim_zero_grad_kwargs = {}
+        if 'set_to_none' in inspect.signature(optim.zero_grad).parameters:
+            self.optim_zero_grad_kwargs['set_to_none'] = True
+
+        return optim
+
+    def _setup_scheduler_for_train(self, optim, freeze_sdf: bool = False):
+        """为 train() 创建学习率调度器。
+
+        Args:
+            optim: 优化器实例
+            freeze_sdf: 是否冻结 SDF（影响调度策略）
+
+        Returns:
+            LambdaLR: 学习率调度器实例
+        """
+        if freeze_sdf:
+            # 冻结 SDF 时使用余弦退火调度
+            max_epochs = self.cfg.max_epoch
+
+            def lr_schedule(epoch):
+                if epoch < 100:
+                    return epoch / 100  # warm up
+                else:
+                    progress = (epoch - 100) / max(max_epochs - 100, 1)
+                    return 0.5 * (1 + np.cos(np.pi * progress))
+
+            return LambdaLR(optim, lr_lambda=lr_schedule)
+        else:
+            # 正常训练使用配置文件中的调度策略
+            return self.setup_scheduler(optim)
+
+    def _restore_sdf_trainable(self):
+        """恢复 SDF 网络参数为可训练状态。"""
+        neural_sdf = self.model_module.neural_sdf
+        for param in neural_sdf.parameters():
+            param.requires_grad = True
+
     def wrap_model(self, model):
         # 使用指数移动平均（EMA）包装模型
         if self.cfg.trainer.ema_config.enabled:
@@ -261,7 +373,13 @@ class Trainer(object):
             scaler_kwargs.pop('dtype', None)
             scaler_kwargs.pop('cache_enabled', None)
 
-        self.scaler = GradScaler('cuda', **scaler_kwargs)
+        # Use the device from trainer, extract device index if needed
+        if isinstance(self.device, str):
+            # Extract base device name (e.g., 'cuda:0' -> 'cuda')
+            scaler_device = self.device.split(':')[0] if ':' in self.device else self.device
+        else:
+            scaler_device = str(self.device).split(':')[0] if ':' in str(self.device) else str(self.device)
+        self.scaler = GradScaler(scaler_device, **scaler_kwargs)
 
     def init_logging_attributes(self):
         r"""Initialize logging attributes."""
@@ -298,7 +416,7 @@ class Trainer(object):
     def fitMeshSDF(
         self,
         mesh: trimesh.Trimesh,
-        sample_point_num: int = 8192,
+        sample_point_num: int = 2048,
         lr: float = 1e-4,
         log_interval: int = 100,
         patience: int = 50,
@@ -384,9 +502,9 @@ class Trainer(object):
 
         # 获取NeuralSDF模块和coarse2fine配置
         neural_sdf = self.model_module.neural_sdf
-        cfg_c2f = self.cfg.model.object.sdf.encoding.coarse2fine
-        total_levels = self.cfg.model.object.sdf.encoding.levels
-        init_active_level = cfg_c2f.init_active_level
+        init_active_level = self.cfg.model.object.sdf.encoding.coarse2fine.init_active_level
+        #total_levels = self.cfg.model.object.sdf.encoding.levels
+        total_levels = 6
 
         print('[INFO][Trainer::fitMeshSDF]')
         print(f'\t Adaptive Coarse-to-fine SDF fitting:')
@@ -430,9 +548,9 @@ class Trainer(object):
             best_loss = float('inf')
             epochs_without_improvement = 0
             level_epoch = 0
-            
+
             pbar = tqdm(desc=f"Level {current_level}/{total_levels}", leave=False)
-            
+
             while epochs_without_improvement < patience and level_epoch < max_epochs_per_level:
                 # 每轮使用 Warp 重新采样点和 SDF 值
                 points_np, sdf_np = sample_sdf_with_warp(sample_point_num)
@@ -496,7 +614,7 @@ class Trainer(object):
                 total_epoch += 1
 
             pbar.close()
-            
+
             # 打印当前层级的训练结果
             if epochs_without_improvement >= patience:
                 print(f'\t [C2F] Level {current_level} converged after {level_epoch} epochs (patience reached)')
@@ -512,36 +630,170 @@ class Trainer(object):
         print(f'\t Total epochs: {total_epoch}, Final level: {neural_sdf.active_levels}')
         return True
 
-    def fitMeshFileSDF(
+    def fitAll(
         self,
-        mesh_file_path: str,
-        sample_point_num: int = 8192,
-        lr: float = 1e-4,
+        mesh: trimesh.Trimesh,
+        # SDF fitting 参数
+        sdf_sample_point_num: int = 2048,
+        sdf_lr: float = 1e-4,
+        sdf_patience: int = 50,
+        sdf_min_delta: float = 1e-6,
+        sdf_max_epochs_per_level: int = 500,
+        # 联合训练参数
+        run_joint_training: bool = True,
         log_interval: int = 100,
-        patience: int = 50,
-        min_delta: float = 1e-6,
-        max_epochs_per_level: int = 500,
     ) -> bool:
-        """从文件加载mesh并使用自适应coarse-to-fine策略训练SDF。
+        """完整的三阶段训练流程：SDF -> RGB -> 联合优化。
+
+        这个函数按顺序执行：
+        1. fitMeshSDF: 使用 mesh 的 SDF 值训练 NeuralSDF 网络
+        2. train(freeze_sdf=True): 冻结 SDF，训练 NeuralRGB 和 BackgroundNeRF
+        3. train(freeze_sdf=False): 联合优化所有网络（可选）
 
         Args:
-            mesh_file_path (str): mesh文件路径。
-            其他参数见 fitMeshSDF 方法。
+            mesh (trimesh.Trimesh): 输入的三角网格对象。
+
+            SDF fitting 参数:
+                sdf_sample_point_num (int): 每轮采样的点数，默认2048。
+                sdf_lr (float): SDF 学习率，默认1e-4。
+                sdf_patience (int): SDF 早停耐心值，默认50。
+                sdf_min_delta (float): SDF loss 下降最小阈值，默认1e-6。
+                sdf_max_epochs_per_level (int): 每层最大 epoch 数，默认500。
+
+            联合训练参数:
+                run_joint_training (bool): 是否运行联合训练阶段，默认True。
+                log_interval (int): 日志打印间隔，默认100。
+
+        Returns:
+            bool: 训练是否成功。
+        """
+        print('=' * 60)
+        print('[INFO][Trainer::fitAll] Starting complete training pipeline')
+        print('=' * 60)
+
+        # ==================== 阶段 1: SDF 训练 ====================
+        print('\n' + '=' * 60)
+        print('[STAGE 1/3] Training SDF from mesh')
+        print('=' * 60)
+
+        sdf_checkpoint_path = os.path.join(self.cfg.logdir, 'model_after_sdf.pt')
+
+        # 检查 SDF 检查点是否存在
+        if os.path.exists(sdf_checkpoint_path):
+            print(f'[INFO] Found existing SDF checkpoint: {sdf_checkpoint_path}')
+            print('[INFO] Loading checkpoint and skipping SDF training...')
+            self.load_checkpoint(sdf_checkpoint_path, load_opt=False, load_sch=False)
+            print('[INFO] SDF checkpoint loaded successfully, skipping SDF training stage.')
+        else:
+            print(f'[INFO] SDF checkpoint not found, starting SDF training...')
+            success = self.fitMeshSDF(
+                mesh,
+                sample_point_num=sdf_sample_point_num,
+                lr=sdf_lr,
+                log_interval=log_interval,
+                patience=sdf_patience,
+                min_delta=sdf_min_delta,
+                max_epochs_per_level=sdf_max_epochs_per_level,
+            )
+
+            if not success:
+                print('[ERROR][Trainer::fitAll] SDF training failed!')
+                return False
+
+            # 保存 SDF 阶段的检查点
+            self.checkpointer.save(sdf_checkpoint_path, current_epoch=0, current_iteration=0)
+            print(f'[INFO] SDF checkpoint saved to: {sdf_checkpoint_path}')
+
+        # ==================== 阶段 2: RGB 训练（冻结 SDF）====================
+        print('\n' + '=' * 60)
+        print('[STAGE 2/3] Training RGB and Background with frozen SDF')
+        print('=' * 60)
+
+        rgb_checkpoint_path = os.path.join(self.cfg.logdir, 'model_after_rgb.pt')
+
+        # 检查 RGB 检查点是否存在
+        if os.path.exists(rgb_checkpoint_path):
+            print(f'[INFO] Found existing RGB checkpoint: {rgb_checkpoint_path}')
+            print('[INFO] Loading checkpoint and skipping RGB training...')
+            self.load_checkpoint(rgb_checkpoint_path, load_opt=False, load_sch=False)
+            print('[INFO] RGB checkpoint loaded successfully, skipping RGB training stage.')
+        else:
+            print(f'[INFO] RGB checkpoint not found, starting RGB training with freeze_sdf=True...')
+            # 使用 train(freeze_sdf=True) 冻结 SDF，只训练 RGB 相关网络
+            self.train(freeze_sdf=True)
+
+            # 保存 RGB 阶段的检查点
+            self.checkpointer.save(rgb_checkpoint_path, current_epoch=0, current_iteration=0)
+            print(f'[INFO] RGB checkpoint saved to: {rgb_checkpoint_path}')
+
+        # ==================== 阶段 3: 联合优化（可选）====================
+        if run_joint_training:
+            print('\n' + '=' * 60)
+            print('[STAGE 3/3] Joint optimization of SDF, RGB, and Background')
+            print('=' * 60)
+
+            joint_checkpoint_path = os.path.join(self.cfg.logdir, 'model_after_joint.pt')
+
+            # 检查联合训练检查点是否存在
+            if os.path.exists(joint_checkpoint_path):
+                print(f'[INFO] Found existing joint training checkpoint: {joint_checkpoint_path}')
+                print('[INFO] Loading checkpoint and skipping joint training...')
+                self.load_checkpoint(joint_checkpoint_path, load_opt=True, load_sch=True)
+                print('[INFO] Joint training checkpoint loaded successfully, skipping joint training stage.')
+            else:
+                print(f'[INFO] Joint training checkpoint not found, starting joint training...')
+                # 运行联合训练（train() 内部会创建优化器和调度器，freeze_sdf=False 训练所有参数）
+                self.train(freeze_sdf=False)
+
+                # 保存联合训练阶段的检查点
+                self.checkpointer.save(joint_checkpoint_path, current_epoch=0, current_iteration=0)
+                print(f'[INFO] Joint training checkpoint saved to: {joint_checkpoint_path}')
+
+        print('\n' + '=' * 60)
+        print('[INFO][Trainer::fitAll] Complete training pipeline finished!')
+        print('=' * 60)
+
+        return True
+
+    def fitMeshFileAll(
+        self,
+        mesh_file_path: str,
+        # SDF fitting 参数
+        sdf_sample_point_num: int = 2048,
+        sdf_lr: float = 1e-4,
+        sdf_patience: int = 50,
+        sdf_min_delta: float = 1e-6,
+        sdf_max_epochs_per_level: int = 500,
+        # 联合训练参数
+        run_joint_training: bool = True,
+        log_interval: int = 100,
+    ) -> bool:
+        """从文件加载 mesh 并执行完整的三阶段训练。
+
+        Args:
+            mesh_file_path (str): mesh 文件路径。
+            其他参数见 fitAll 方法。
 
         Returns:
             bool: 训练是否成功。
         """
         if not os.path.exists(mesh_file_path):
-            print('[ERROR][Trainer::fitMeshFileSDF]')
+            print('[ERROR][Trainer::fitMeshFileAll]')
             print('\t mesh file not exist!')
             print('\t mesh_file_path:', mesh_file_path)
             return False
 
         mesh = loadMeshFile(mesh_file_path)
 
-        return self.fitMeshSDF(
-            mesh, sample_point_num, lr, log_interval,
-            patience, min_delta, max_epochs_per_level
+        return self.fitAll(
+            mesh,
+            sdf_sample_point_num=sdf_sample_point_num,
+            sdf_lr=sdf_lr,
+            sdf_patience=sdf_patience,
+            sdf_min_delta=sdf_min_delta,
+            sdf_max_epochs_per_level=sdf_max_epochs_per_level,
+            run_joint_training=run_joint_training,
+            log_interval=log_interval,
         )
 
     def start_of_epoch(self, current_epoch):
@@ -556,8 +808,11 @@ class Trainer(object):
         r"""Things to do before an iteration."""
         self.current_iteration = current_iteration
         self._update_progress(current_iteration)
-        data = to_cuda(data)
+        data = to_cuda(data, device=self.device)
         self.model.train()
+        # 如果 freeze_sdf 模式，确保 SDF 保持 eval 模式
+        if getattr(self, '_freeze_sdf', False):
+            self.model_module.neural_sdf.eval()
         return data
 
     def end_of_iteration(self, current_iteration):
@@ -672,12 +927,28 @@ class Trainer(object):
         total_loss = self._get_total_loss()
         return total_loss
 
-    def train(self):
+    def train(self, freeze_sdf: bool = False):
         """训练主循环。
 
         使用基于 epoch 的训练方式，每个 epoch 包含 iters_per_epoch 次迭代。
         数据通过循环迭代器按顺序获取，确保所有图片都被均匀使用。
+
+        Args:
+            freeze_sdf: 是否冻结 SDF 网络参数，只训练 RGB 相关网络。
+                - False（默认）: 训练所有参数（完整训练模式）
+                - True: 冻结 SDF 参数，只训练 NeuralRGB、BackgroundNeRF、s_var 和 appearance embedding
         """
+        # ==================== 根据 freeze_sdf 设置可训练参数和优化器 ====================
+        trainable_params = self._get_trainable_params(freeze_sdf)
+        self.optim = self._setup_optimizer_for_train(trainable_params, freeze_sdf)
+        self.sched = self._setup_scheduler_for_train(self.optim, freeze_sdf)
+
+        # 更新 checkpointer 的引用（因为 optim 和 sched 已更新）
+        self.checkpointer = Checkpointer(self.model, self.optim, self.sched)
+
+        # 保存 freeze_sdf 状态，供 train_step 使用
+        self._freeze_sdf = freeze_sdf
+
         # Resume from checkpoint if available
         start_epoch = self.checkpointer.resume_epoch or self.current_epoch
         current_iteration = self.checkpointer.resume_iteration or self.current_iteration
@@ -720,6 +991,10 @@ class Trainer(object):
             # Epoch 结束时执行所有操作（验证、保存、日志）
             self.end_of_epoch(data, current_epoch + 1, current_iteration)
 
+        # ==================== 训练结束，恢复 SDF 参数为可训练状态 ====================
+        if freeze_sdf:
+            self._restore_sdf_trainable()
+
         # 训练结束，保存最终模型
         self.checkpointer.save(self.checkpoint_path_last, self.cfg.max_epoch, current_iteration)
         print('Done with training!!!')
@@ -751,7 +1026,7 @@ class Trainer(object):
     def _get_total_loss(self):
         r"""Return the total loss to be backpropagated.
         """
-        total_loss = torch.tensor(0., device=torch.device('cuda'))
+        total_loss = torch.tensor(0., device=self.device)
         # Iterates over all possible losses.
         for loss_name in self.weights:
             if loss_name in self.losses:

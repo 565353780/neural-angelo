@@ -8,26 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# 尝试导入 nerfacc
-try:
-    import nerfacc
-    from nerfacc import OccGridEstimator, render_weight_from_alpha, accumulate_along_rays
-    NERFACC_AVAILABLE = True
-    NERFACC_VERSION = getattr(nerfacc, '__version__', '0.5.0')
-except ImportError:
-    NERFACC_AVAILABLE = False
-    NERFACC_VERSION = None
-    print("Warning: nerfacc not available, using vanilla ray marching")
-
-
-def check_nerfacc_available():
-    """检查 nerfacc 是否可用"""
-    return NERFACC_AVAILABLE
-
-
-def get_nerfacc_version():
-    """获取 nerfacc 版本"""
-    return NERFACC_VERSION
+from nerfacc import OccGridEstimator, render_weight_from_alpha, accumulate_along_rays
 
 
 class NerfAccEstimator(nn.Module):
@@ -47,25 +28,22 @@ class NerfAccEstimator(nn.Module):
             device: 计算设备
         """
         super().__init__()
-        
-        if not NERFACC_AVAILABLE:
-            raise ImportError("nerfacc is not available. Please install it via: pip install nerfacc")
-        
+
         if not isinstance(aabb, torch.Tensor):
             aabb = torch.tensor(aabb, dtype=torch.float32)
-        
+
         self.register_buffer('aabb', aabb)
         self.resolution = resolution
-        
+
         # 创建 OccGridEstimator
         self.estimator = OccGridEstimator(
             roi_aabb=aabb,
             resolution=resolution,
         )
-        
+
         # 移动到指定设备
         self.to(device)
-        
+
     def sampling(self, rays_o, rays_d, sigma_fn=None, alpha_fn=None,
                  near_plane=0.0, far_plane=1e10, render_step_size=1e-3,
                  stratified=True, alpha_thre=0.0):

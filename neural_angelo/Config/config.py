@@ -78,7 +78,7 @@ class Config:
                         max_logres: int = 11
                         dict_size: int = 22
                         dim: int = 8
-                        range: list = [-2, 2]
+                        range: list = [-1, 1]
 
                     hashgrid = Hashgrid()
 

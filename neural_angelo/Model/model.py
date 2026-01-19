@@ -6,7 +6,7 @@ from collections import defaultdict
 from neural_angelo.Util import nerf_util, camera, render
 from neural_angelo.Util import nerf_misc as misc
 from neural_angelo.Util.nerfacc_util import (
-    NERFACC_AVAILABLE, NerfAccEstimator,
+    NerfAccEstimator,
     compute_neus_alpha_nerfacc, render_with_nerfacc,
     get_aabb_from_radius, estimate_render_step_size
 )
@@ -39,12 +39,12 @@ class Model(torch.nn.Module):
         self.sample_dists_from_pdf = partial(nerf_util.sample_dists_from_pdf,
                                              intvs_fine=cfg_model.render.num_samples.fine)
         self.to_full_val_image = partial(misc.to_full_image, image_size=cfg_data.val.image_size)
-        
+
         # NerfAcc 加速配置
         self.use_nerfacc = False
         self.estimator = None
         self.estimator_bg = None
-        if hasattr(cfg_model, 'nerfacc') and cfg_model.nerfacc.enabled and NERFACC_AVAILABLE:
+        if hasattr(cfg_model, 'nerfacc') and cfg_model.nerfacc.enabled:
             self._build_nerfacc(cfg_model)
 
     def get_param_groups(self):

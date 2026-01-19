@@ -52,7 +52,7 @@ def demo():
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
     print("加载检查点...")
-    trainer.checkpointer.load(checkpoint)
+    #trainer.checkpointer.load(checkpoint)
 
     if not extract_mesh_only:
         # 开始训练

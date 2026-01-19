@@ -10,7 +10,6 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from neural_angelo.Util.init_weight import weights_init, weights_rescale
-from neural_angelo.Util.model_average import ModelAverage
 from neural_angelo.Util.misc import to_cuda, requires_grad
 from neural_angelo.Util.visualization import tensorboard_image
 
@@ -21,6 +20,7 @@ from neural_angelo.Loss.curvature import curvature_loss
 from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Method.cudnn import init_cudnn
 from neural_angelo.Module.checkpointer import Checkpointer
+from neural_angelo.Module.model_average import ModelAverage
 
 
 def cycle_dataloader(data_loader):

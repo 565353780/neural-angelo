@@ -127,7 +127,7 @@ class Config:
 
         class Background:
             enabled: bool = True
-            white: bool = False
+            white: bool = True
             view_dep: bool = True
 
             class MLP:
@@ -141,45 +141,44 @@ class Config:
                 activ_params: dict = {}
                 activ_density: str = "softplus"
                 activ_density_params: dict = {}
-            
+
             mlp = MLP()
-            
+
             class Encoding:
-                type: str = "fourier"
                 levels: int = 10
-            
+
             encoding = Encoding()
-            
+
             class EncodingView:
                 type: str = "spherical"
                 levels: int = 3
-            
+
             encoding_view = EncodingView()
-        
+
         background = Background()
-        
+
         class Render:
             rand_rays: int = 512
-            
+
             class NumSamples:
                 coarse: int = 64
                 fine: int = 16
                 background: int = 32
-            
+
             num_samples = NumSamples()
             num_sample_hierarchy: int = 4
             stratified: bool = True
-        
+
         render = Render()
-        
+
         class AppearEmbed:
             enabled: bool = False
             dim: int = 8
-        
+
         appear_embed = AppearEmbed()
-    
+
     model = Model()
-    
+
     # ==================== 优化器配置 ====================
     class Optim:
         class Params:

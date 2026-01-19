@@ -1,42 +1,8 @@
-'''
------------------------------------------------------------------------------
-Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
-
-NVIDIA CORPORATION and its licensors retain all intellectual property
-and proprietary rights in and to this software, related documentation
-and any modifications thereto. Any use, reproduction, disclosure or
-distribution of this software and related documentation without an express
-license agreement from NVIDIA CORPORATION is strictly prohibited.
------------------------------------------------------------------------------
-'''
-
 import copy
-
 import torch
 from torch import nn
+
 from neural_angelo.Util.misc import requires_grad
-
-
-def reset_batch_norm(m):
-    r"""Reset batch norm statistics
-
-    Args:
-        m: Pytorch module
-    """
-    if hasattr(m, 'reset_running_stats'):
-        m.reset_running_stats()
-
-
-def calibrate_batch_norm_momentum(m):
-    r"""Calibrate batch norm momentum
-
-    Args:
-        m: Pytorch module
-    """
-    if hasattr(m, 'reset_running_stats'):
-        # if m._get_name() == 'SyncBatchNorm':
-        if 'BatchNorm' in m._get_name():
-            m.momentum = 1.0 / float(m.num_batches_tracked + 1)
 
 
 class ModelAverage(nn.Module):

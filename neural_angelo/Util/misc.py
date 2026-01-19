@@ -1,5 +1,4 @@
 import torch
-import collections
 
 string_classes = (str, bytes)
 
@@ -29,9 +28,9 @@ def to_device(data, device):
     if isinstance(data, torch.Tensor):
         data = data.to(device)
         return data
-    elif isinstance(data, collections.abc.Mapping):
-        return type(data)({key: to_device(data[key], device) for key in data})
-    elif isinstance(data, collections.abc.Sequence) and not isinstance(data, string_classes):
+    elif isinstance(data, dict):
+        return {key: to_device(data[key], device) for key in data}
+    elif isinstance(data, (list, tuple)) and not isinstance(data, string_classes):
         return type(data)([to_device(d, device) for d in data])
     else:
         return data
@@ -55,52 +54,4 @@ def to_cpu(data):
     return to_device(data, 'cpu')
 
 
-def to_half(data):
-    """将所有浮点数转换为半精度。
 
-    Args:
-        data (dict, list or tensor): 输入数据。
-    """
-    if isinstance(data, torch.Tensor) and torch.is_floating_point(data):
-        data = data.half()
-        return data
-    elif isinstance(data, collections.abc.Mapping):
-        return type(data)({key: to_half(data[key]) for key in data})
-    elif isinstance(data, collections.abc.Sequence) and not isinstance(data, string_classes):
-        return type(data)([to_half(d) for d in data])
-    else:
-        return data
-
-
-def to_float(data):
-    """将所有半精度转换为浮点数。
-
-    Args:
-        data (dict, list or tensor): 输入数据。
-    """
-    if isinstance(data, torch.Tensor) and torch.is_floating_point(data):
-        data = data.float()
-        return data
-    elif isinstance(data, collections.abc.Mapping):
-        return type(data)({key: to_float(data[key]) for key in data})
-    elif isinstance(data, collections.abc.Sequence) and not isinstance(data, string_classes):
-        return type(data)([to_float(d) for d in data])
-    else:
-        return data
-
-
-def slice_tensor(data, start, end):
-    """对所有张量进行切片。
-
-    Args:
-        data (dict, list or tensor): 输入数据。
-    """
-    if isinstance(data, torch.Tensor):
-        data = data[start:end]
-        return data
-    elif isinstance(data, collections.abc.Mapping):
-        return type(data)({key: slice_tensor(data[key], start, end) for key in data})
-    elif isinstance(data, collections.abc.Sequence) and not isinstance(data, string_classes):
-        return type(data)([slice_tensor(d, start, end) for d in data])
-    else:
-        return data

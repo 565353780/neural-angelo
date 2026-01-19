@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import tinycudann as tcnn
 
-from neural_angelo.Model.Layer.mlp import MLPforNeuralSDF
+from neural_angelo.Model.Layer.mlp_for_neural_sdf import MLPforNeuralSDF
 
 
 class NeuralSDF(torch.nn.Module):

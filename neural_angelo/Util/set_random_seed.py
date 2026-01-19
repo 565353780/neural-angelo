@@ -14,23 +14,15 @@ import random
 import numpy as np
 import torch
 
-from neural_angelo.Util.distributed import get_rank
-from neural_angelo.Util.distributed import master_only_print as print
 
-
-def set_random_seed(seed, by_rank=False):
-    r"""Set random seeds for everything, including random, numpy, torch.manual_seed, torch.cuda_manual_seed.
-    torch.cuda.manual_seed_all is not necessary (included in torch.manual_seed)
+def set_random_seed(seed):
+    """设置所有随机种子，包括 random, numpy, torch.manual_seed, torch.cuda_manual_seed。
 
     Args:
-        seed (int): Random seed.
-        by_rank (bool): if true, each gpu will use a different random seed.
+        seed (int): 随机种子。
     """
-    if by_rank:
-        seed += get_rank()
     print(f"Using random seed {seed}")
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)         # sets seed on the current CPU & all GPUs
-    torch.cuda.manual_seed(seed)    # sets seed on current GPU
-    # torch.cuda.manual_seed_all(seed)  # included in torch.manual_seed
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)

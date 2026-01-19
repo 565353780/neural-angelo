@@ -36,10 +36,9 @@ def _calculate_model_size(model):
 
 
 def collate_test_data_batches(data_batches):
-    """Collate test data batches from a single GPU (simplified for single GPU training)."""
+    """将多个测试数据批次合并为一个字典。"""
     if not data_batches:
         return {}
-    # Concatenate all batches
     data_all = {}
     for key in data_batches[0].keys():
         if isinstance(data_batches[0][key], torch.Tensor):
@@ -51,13 +50,8 @@ def collate_test_data_batches(data_batches):
     return data_all
 
 
-def get_unique_test_data(data_gather, idx):
-    """Get unique test data (simplified for single GPU training)."""
-    return data_gather
-
-
 def trim_test_samples(data, max_samples=None):
-    """Trim test samples to max_samples (simplified for single GPU training)."""
+    """将测试样本数量限制在 max_samples 以内。"""
     if max_samples is None or max_samples <= 0:
         return
     for key in data.keys():
@@ -158,8 +152,8 @@ class Trainer(object):
             cfg (obj): Global configuration.
             seed (int): Random seed.
         """
-        # Set the random seed for consistent initialization.
-        set_random_seed(seed, by_rank=False)
+        # 设置随机种子以确保初始化一致性
+        set_random_seed(seed)
         # Construct networks
         model = Model(cfg.model, cfg.data)
         print('model parameter count: {:,}'.format(_calculate_model_size(model)))
@@ -202,7 +196,7 @@ class Trainer(object):
         return LambdaLR(optim, lambda x: sch(x))
 
     def wrap_model(self, cfg, model):
-        # Moving average model wrapping (no DDP for single GPU training).
+        # 使用指数移动平均（EMA）包装模型
         if cfg.trainer.ema_config.enabled:
             model = ModelAverage(model,
                                 cfg.trainer.ema_config.beta,
@@ -575,9 +569,8 @@ class Trainer(object):
             output = model.inference(data)
             data.update(output)
             data_batches.append(data)
-        # Aggregate the data and process the results.
-        data_gather = collate_test_data_batches(data_batches)
-        data_all = get_unique_test_data(data_gather, data_gather["idx"])
+        # 合并所有批次的数据
+        data_all = collate_test_data_batches(data_batches)
         tqdm.write(f"Evaluating with {len(data_all['idx'])} samples.")
         # Validate/test.
         if mode == "val":

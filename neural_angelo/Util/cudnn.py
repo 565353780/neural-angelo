@@ -12,17 +12,14 @@ license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import torch.backends.cudnn as cudnn
 
-from neural_angelo.Util.distributed import master_only_print as print
-
 
 def init_cudnn(deterministic, benchmark):
-    r"""Initialize the cudnn module. The two things to consider is whether to
-    use cudnn benchmark and whether to use cudnn deterministic. If cudnn
-    benchmark is set, then the cudnn deterministic is automatically false.
+    """初始化 cudnn 模块。需要考虑的两个方面是是否使用 cudnn benchmark 和是否使用 cudnn deterministic。
+    如果设置了 cudnn benchmark，则 cudnn deterministic 自动为 False。
 
     Args:
-        deterministic (bool): Whether to use cudnn deterministic.
-        benchmark (bool): Whether to use cudnn benchmark.
+        deterministic (bool): 是否使用 cudnn deterministic。
+        benchmark (bool): 是否使用 cudnn benchmark。
     """
     cudnn.deterministic = deterministic
     cudnn.benchmark = benchmark

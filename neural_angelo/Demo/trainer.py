@@ -41,7 +41,7 @@ def demo():
     cfg.data.num_images = len(os.listdir(cfg.data.root + 'images/'))
 
     # 设置随机种子
-    set_random_seed(seed, by_rank=False)
+    set_random_seed(seed)
     print(f"随机种子: {seed}")
 
     # 初始化 cuDNN

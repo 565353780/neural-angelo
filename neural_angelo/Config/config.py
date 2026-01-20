@@ -3,8 +3,8 @@ class Config:
     """
 
     # ==================== 基础训练配置 ====================
-    iters_per_epoch: int = 200  # 每个 epoch 的迭代次数
-    max_epoch: int = 2500  # 最大 epoch 数
+    iters_per_epoch: int = 2000  # 每个 epoch 的迭代次数
+    max_epoch: int = 250  # 最大 epoch 数
 
     # ==================== 检查点配置 ====================
     class Checkpoint:
@@ -78,7 +78,7 @@ class Config:
                         max_logres: int = 11
                         dict_size: int = 22
                         dim: int = 8
-                        range: list = [-1, 1]
+                        range: list = [-2, 2]
 
                     hashgrid = Hashgrid()
 
@@ -170,30 +170,6 @@ class Config:
             stratified: bool = True
 
         render = Render()
-
-        # ==================== NerfAcc 加速配置 ====================
-        class NerfAcc:
-            enabled: bool = True  # 是否启用 nerfacc 加速
-            grid_prune: bool = True  # 是否使用 OccupancyGrid 剪枝
-
-            class OccGrid:
-                resolution: int = 128  # 前景 OccupancyGrid 分辨率
-                resolution_bg: int = 64  # 背景 OccupancyGrid 分辨率
-                update_interval: int = 16  # 更新间隔（迭代次数）
-                warmup_steps: int = 256  # 预热步数
-                occ_thre: float = 0.01  # 占据阈值
-
-            occ_grid = OccGrid()
-
-            # 射线采样参数
-            render_step_size: float = None  # 如果为 None，则自动计算
-            alpha_thre: float = 0.0  # alpha 阈值
-            near_plane: float = 0.0  # 近平面
-            far_plane: float = 1e10  # 远平面
-
-        nerfacc = NerfAcc()
-
-        radius: float = 1.0  # 场景半径（用于 AABB）
 
         class AppearEmbed:
             enabled: bool = False
@@ -299,4 +275,4 @@ class Config:
     
     def __repr__(self):
         """返回配置的字符串表示"""
-        return f"Config(data.root={self.data.root}, max_epoch={self.max_epoch})"
+        return f"Config(data.root={self.data.root}, max_iter={self.max_iter})"

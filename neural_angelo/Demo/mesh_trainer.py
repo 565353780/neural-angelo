@@ -28,7 +28,6 @@ def demo():
 
     cfg = Config()
     device = 'cuda:1'
-    extract_mesh_only = False
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/"
@@ -49,32 +48,28 @@ def demo():
 
     # 初始化训练器
     print("初始化训练器...")
-    trainer = MeshTrainer(cfg, gen_mesh_file_path, device)
+    trainer = MeshTrainer(cfg, device)
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
-    print("加载检查点...")
+    # print("加载检查点...")
     # trainer.checkpointer.load(checkpoint)
 
-    if not extract_mesh_only:
-        # 开始训练
-        print("\n" + "=" * 60)
-        print("开始训练...")
-        print("=" * 60 + "\n")
+    # 开始训练
+    print("\n" + "=" * 60)
+    print("开始训练...")
+    print("=" * 60 + "\n")
 
-        trainer.train()
-        trainer.finalize()
-
-    # 导出基本网格
-    trainer.exportMeshFile(cfg.logdir + "mesh.ply")
-
-    # 导出高分辨率带纹理的网格，只保留最大连通分量
-    trainer.exportMeshFile(
-        cfg.logdir + "mesh_textured.ply",
-        resolution=1024,
-        block_res=128,
-        textured=True,
-        keep_lcc=False,
+    trainer.fitMeshFileAll(
+        mesh_file_path=gen_mesh_file_path,
+        sdf_sample_point_num=2048,
+        sdf_lr=1e-3,
+        sdf_patience=50,
     )
+
+    # trainer.train()
+
+    # 结束训练
+    trainer.finalize()
 
     print("\n" + "=" * 60)
     print("训练完成!")

@@ -1,5 +1,4 @@
 import os
-import json
 import torch
 import inspect
 import numpy as np
@@ -20,7 +19,6 @@ from neural_angelo.Dataset.dataloader import get_train_dataloader, get_val_datal
 from neural_angelo.Model.model import Model
 from neural_angelo.Loss.eikonal import eikonal_loss
 from neural_angelo.Loss.curvature import curvature_loss
-from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Method.cudnn import init_cudnn
 from neural_angelo.Method.mesh import extract_mesh_from_sdf, extract_texture
 from neural_angelo.Module.checkpointer import Checkpointer
@@ -264,9 +262,8 @@ class Trainer(object):
 
     def init_tensorboard(self, logdir: str) -> bool:
         print('Initialize TensorBoard')
-        tensorboard_dir = os.path.join(logdir, getCurrentTime())
-        os.makedirs(tensorboard_dir, exist_ok=True)
-        self.tensorboard_writer = SummaryWriter(log_dir=tensorboard_dir)
+        os.makedirs(logdir, exist_ok=True)
+        self.tensorboard_writer = SummaryWriter(log_dir=logdir)
         return True
 
     def start_of_epoch(self, current_epoch):
@@ -561,14 +558,12 @@ class Trainer(object):
             return
         # Log scalars (basic info & losses).
         if mode == "train":
-            self.tensorboard_writer.add_scalar("optim/lr", self.sched.get_last_lr()[0], self.current_iteration)
+            self.tensorboard_writer.add_scalar(f"{mode}/lr", self.sched.get_last_lr()[0], self.current_iteration)
         for key, value in self.losses.items():
             if isinstance(value, torch.Tensor):
                 self.tensorboard_writer.add_scalar(f"{mode}/loss/{key}", value.item() if value.numel() == 1 else value.mean().item(), self.current_iteration)
             else:
                 self.tensorboard_writer.add_scalar(f"{mode}/loss/{key}", value, self.current_iteration)
-        self.tensorboard_writer.add_scalar("iteration", self.current_iteration, self.current_iteration)
-        self.tensorboard_writer.add_scalar("epoch", self.current_epoch, self.current_iteration)
         self.tensorboard_writer.add_scalar(f"{mode}/PSNR", self.metrics["psnr"].detach().item(), self.current_iteration)
         self.tensorboard_writer.add_scalar(f"{mode}/s-var", self.model_module.s_var.item(), self.current_iteration)
         if "curvature" in self.weights:
@@ -578,15 +573,6 @@ class Trainer(object):
         if mode == "train":
             self.tensorboard_writer.add_scalar(f"{mode}/epsilon", self.model_module.neural_sdf.normal_eps, self.current_iteration)
         self.tensorboard_writer.add_scalar(f"{mode}/active_levels", self.model_module.neural_sdf.active_levels, self.current_iteration)
-        
-        # NerfAcc 统计
-        if hasattr(self.model_module, 'use_nerfacc') and self.model_module.use_nerfacc:
-            self.tensorboard_writer.add_scalar(f"{mode}/nerfacc_enabled", 1, self.current_iteration)
-            if hasattr(self.model_module, 'estimator') and self.model_module.estimator is not None:
-                # 记录占据网格的占用率
-                if hasattr(self.model_module.estimator.estimator, 'occs'):
-                    occ_rate = (self.model_module.estimator.estimator.occs > 0).float().mean().item()
-                    self.tensorboard_writer.add_scalar(f"{mode}/occ_grid_rate", occ_rate, self.current_iteration)
 
     def log_tensorboard_images(self, data, mode=None, max_samples=None):
         trim_test_samples(data, max_samples=max_samples)

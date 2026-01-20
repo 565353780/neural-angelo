@@ -1,8 +1,8 @@
 import os
 
-from neural_angelo.Util.set_random_seed import set_random_seed
-
 from neural_angelo.Config.config import Config
+from neural_angelo.Util.set_random_seed import set_random_seed
+from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Module.mesh_trainer import MeshTrainer
 
 
@@ -30,10 +30,11 @@ def demo():
 
     cfg = Config()
     device = 'cuda:0'
+    occ_margin_voxels = 4
     extract_mesh_only = False
 
     # 设置日志目录
-    cfg.logdir = data_folder + "na/logs/"
+    cfg.logdir = data_folder + "na/logs/" + getCurrentTime() + '/'
     cfg.data.root = data_folder + "na/"
     cfg.data.num_images = len(os.listdir(cfg.data.root + 'images/'))
 
@@ -51,7 +52,12 @@ def demo():
 
     # 初始化训练器
     print("初始化训练器...")
-    trainer = MeshTrainer(cfg, gen_mesh_file_path, device)
+    trainer = MeshTrainer(
+        cfg,
+        gen_mesh_file_path,
+        device,
+        occ_margin_voxels=occ_margin_voxels,
+    )
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
     print("加载检查点...")

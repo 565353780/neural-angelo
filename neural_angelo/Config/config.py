@@ -3,8 +3,8 @@ class Config:
     """
 
     # ==================== 基础训练配置 ====================
-    iters_per_epoch: int = 2000  # 每个 epoch 的迭代次数
-    max_epoch: int = 250  # 最大 epoch 数
+    iters_per_epoch: int = 1000  # 每个 epoch 的迭代次数
+    max_epoch: int = 25000  # 最大 epoch 数
 
     # ==================== 检查点配置 ====================
     class Checkpoint:
@@ -184,19 +184,19 @@ class Config:
         class Params:
             lr: float = 1e-3
             weight_decay: float = 1e-2
-        
+
         params = Params()
-        
+
         class Sched:
             iteration_mode: bool = True
             warm_up_end: int = 5000
             two_steps: list = [300000, 400000]
             gamma: float = 10.0
-        
+
         sched = Sched()
-    
+
     optim = Optim()
-    
+
     # ==================== 数据配置 ====================
     class Data:
         name: str = "dummy"  # 数据集名称
@@ -207,9 +207,7 @@ class Config:
         num_images: int = None  # 训练图像数量（用于 appearance embedding）
 
         class Train:
-            image_size: list = [1024, 1024]
             batch_size: int = 2
-            subset: int = None
 
         train = Train()
 

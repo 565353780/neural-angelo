@@ -1,26 +1,14 @@
-'''
------------------------------------------------------------------------------
-Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
-
-NVIDIA CORPORATION and its licensors retain all intellectual property
-and proprietary rights in and to this software, related documentation
-and any modifications thereto. Any use, reproduction, disclosure or
-distribution of this software and related documentation without an express
-license agreement from NVIDIA CORPORATION is strictly prohibited.
------------------------------------------------------------------------------
-'''
-
-import torch
 import tqdm
-import threading
+import torch
 import queue
+import threading
 
 
 class BaseDataset(torch.utils.data.Dataset):
 
-    def __init__(self, cfg, is_inference=False, is_test=False):
+    def __init__(self, is_inference=False):
         super().__init__()
-        self.split = "test" if is_test else "val" if is_inference else "train"
+        self.split = "val" if is_inference else "train"
 
     def _preload_worker(self, data_list, load_func, q, lock, idx_tqdm):
         # Keep preloading data in parallel.

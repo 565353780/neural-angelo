@@ -1,3 +1,6 @@
+import sys
+sys.path.append('../../MATCH/camera-control')
+
 import os
 
 from neural_angelo.Util.set_random_seed import set_random_seed
@@ -23,11 +26,11 @@ def demo():
 
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
 
-    checkpoint = data_folder + "na/logs/model_last.pt"
+    checkpoint = data_folder + "na/logs/model_last_backup.pt"
 
     cfg = Config()
-    device = 'cuda:1'
-    extract_mesh_only = True
+    device = 'cuda:2'
+    extract_mesh_only = False
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/"
@@ -64,7 +67,12 @@ def demo():
         trainer.finalize()
 
     # 导出基本网格
-    trainer.exportMeshFile(cfg.logdir + "mesh.ply")
+    trainer.exportMeshFile(
+        cfg.logdir + "mesh.ply",
+        resolution=512,
+        block_res=128,
+    )
+    return
 
     # 导出高分辨率带纹理的网格，只保留最大连通分量
     trainer.exportMeshFile(

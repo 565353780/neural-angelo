@@ -2,13 +2,14 @@ import torch
 import random
 
 from neural_angelo.Dataset.data import Dataset
+from neural_angelo.Dataset.mesh_image import MeshImageDataset
 from neural_angelo.Module.multi_epochs_dataloader import MultiEpochsDataLoader
 
 
 def _create_dataloader(cfg, is_inference, batch_size, shuffle, use_multi_epoch_loader,
                        subset_indices=None, subset_size=None):
     """创建数据加载器的通用函数。"""
-    dataset = Dataset(cfg, is_inference=is_inference)
+    dataset = MeshImageDataset(cfg, is_inference=is_inference)
     split_name = "Val" if is_inference else "Train"
 
     # 处理 subset：优先使用传入的 indices，否则根据 subset_size 随机选取

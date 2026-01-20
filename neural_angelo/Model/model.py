@@ -1,4 +1,6 @@
+import os
 import torch
+import pickle
 import torch.nn.functional as torch_F
 from functools import partial
 from collections import defaultdict
@@ -20,7 +22,14 @@ class Model(torch.nn.Module):
         self.with_appear_embed = cfg_model.appear_embed.enabled
         self.anneal_end = cfg_model.object.s_var.anneal_end
         self.outside_val = 1000. * (-1 if cfg_model.object.sdf.mlp.inside_out else 1)
-        self.image_size_train = cfg_data.train.image_size
+
+        # 从 camera.pkl 加载相机和图像数据
+        camera_pkl_file_path = cfg_data.root + '../camera.pkl'
+        assert os.path.exists(camera_pkl_file_path), f"camera.pkl not found at {camera_pkl_file_path}"
+        with open(camera_pkl_file_path, 'rb') as f:
+            self.camera_list = pickle.load(f)
+            self.image_size_train = [self.camera_list[0].height, self.camera_list[0].width]
+
         self.image_size_val = cfg_data.val.image_size
         # 初始化训练进度（用于 NeuS 退火策略，会在训练器中更新）
         self.progress = 0.

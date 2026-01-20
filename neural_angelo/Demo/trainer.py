@@ -3,9 +3,9 @@ sys.path.append('../../MATCH/camera-control')
 
 import os
 
-from neural_angelo.Util.set_random_seed import set_random_seed
-
 from neural_angelo.Config.config import Config
+from neural_angelo.Util.set_random_seed import set_random_seed
+from neural_angelo.Method.time import getCurrentTime
 from neural_angelo.Module.trainer import Trainer
 
 
@@ -26,16 +26,15 @@ def demo():
 
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
 
+    checkpoint = None
     checkpoint = data_folder + "na/logs/model_last_backup.pt"
-    #checkpoint = data_folder + "na/logs/model_last.pt"
-    #checkpoint = None
 
     cfg = Config()
-    device = 'cuda:2'
-    extract_mesh_only = False
+    device = 'cuda:0'
+    extract_mesh_only = True
 
     # 设置日志目录
-    cfg.logdir = data_folder + "na/logs/"
+    cfg.logdir = data_folder + "na/logs/" + getCurrentTime() + '/'
     cfg.data.root = data_folder + "na/"
     cfg.data.num_images = len(os.listdir(cfg.data.root + 'images/'))
 
@@ -71,7 +70,7 @@ def demo():
     # 导出基本网格
     trainer.exportMeshFile(
         cfg.logdir + "mesh.ply",
-        resolution=512,
+        resolution=1024,
         block_res=128,
     )
     return

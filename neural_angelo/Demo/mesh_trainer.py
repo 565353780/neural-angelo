@@ -24,14 +24,13 @@ def demo():
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
     gen_mesh_file_path = data_folder + "stage2_192_n_d2_d4_d8_d16.ply"
 
-    checkpoint = data_folder + "na/logs/model_last_backup.pt"
-    #checkpoint = data_folder + "na/logs/model_last.pt"
     checkpoint = None
+    checkpoint = data_folder + "na/logs/20260120_14:34:50/model_last.pt"
 
     cfg = Config()
     device = 'cuda:0'
     occ_margin_voxels = 4
-    extract_mesh_only = False
+    extract_mesh_only = True
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/" + getCurrentTime() + '/'
@@ -57,6 +56,7 @@ def demo():
         gen_mesh_file_path,
         device,
         occ_margin_voxels=occ_margin_voxels,
+        sdf_loss_weight=0,
     )
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）

@@ -98,6 +98,7 @@ class MeshTrainer(Trainer):
         device: str = 'cuda:0',
         freeze_occ_grid: bool = True,
         occ_margin_voxels: float = 2.0,
+        sdf_loss_weight: float = 1.0,
     ):
         # 保存参数
         self.mesh_file_path = mesh_file_path
@@ -106,8 +107,16 @@ class MeshTrainer(Trainer):
         self._occ_grid_initialized = False
         self._mesh = None
 
+        # SDF 损失参数
+        self.sdf_loss_weight_init = sdf_loss_weight
+        self.sdf_loss_weight = sdf_loss_weight
+
         # 预加载 mesh（不修改任何配置）
         self._load_mesh(mesh_file_path)
+
+        # 初始化 Warp mesh（用于 SDF 计算）
+        self._wp_mesh = None
+        self._init_warp_mesh()
 
         # 调用父类初始化（传入 device 参数）
         super().__init__(cfg, device=device)
@@ -154,6 +163,19 @@ class MeshTrainer(Trainer):
         print('\t Note: Mesh should be pre-transformed to match the config space range.')
 
         return True
+
+    def _init_warp_mesh(self):
+        """初始化 Warp mesh 用于快速 SDF 计算。"""
+        if self._mesh is None:
+            return
+
+        vertices = self._mesh.vertices.astype(np.float32)
+        faces = self._mesh.faces.astype(np.int32).flatten()
+
+        self._wp_mesh = wp.Mesh(
+            points=wp.array(vertices, dtype=wp.vec3),
+            indices=wp.array(faces, dtype=int)
+        )
 
     def _get_scene_aabb_from_config(self) -> torch.Tensor:
         """从 config 中获取场景 AABB。
@@ -512,6 +534,9 @@ class MeshTrainer(Trainer):
         model.neural_sdf.set_normal_epsilon()
         self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
 
+        # 更新 SDF 损失权重（线性衰减）
+        self._update_sdf_loss_weight(current_iteration)
+
         # 关键修改：如果启用了 freeze_occ_grid，则不更新 OccupancyGrid
         if self.freeze_occ_grid and self._occ_grid_initialized:
             # 不调用 update_occupancy_grid，保持 Grid 固定
@@ -520,6 +545,122 @@ class MeshTrainer(Trainer):
             # 原有逻辑：更新 nerfacc OccupancyGrid (仅在训练模式下)
             if hasattr(model, 'update_occupancy_grid') and model.training:
                 model.update_occupancy_grid(current_iteration)
+
+    def _update_sdf_loss_weight(self, current_iteration):
+        """更新 SDF 损失权重（线性衰减到 0）。"""
+        max_iter = self.cfg.max_epoch * self.iters_per_epoch
+        # 线性衰减：从 init_weight 衰减到 0
+        decay_ratio = 1.0 - (current_iteration / max_iter)
+        self.sdf_loss_weight = self.sdf_loss_weight_init * decay_ratio
+
+    def _compute_sdf_loss(self, points: torch.Tensor) -> torch.Tensor:
+        """计算 SDF L1 损失。
+
+        Args:
+            points: [N, 3] 采样点坐标。
+
+        Returns:
+            loss: SDF L1 损失标量。
+        """
+        if self._wp_mesh is None or points.numel() == 0:
+            return torch.tensor(0.0, device=self.device)
+
+        # 获取预测的 SDF
+        pred_sdf = self.model_module.neural_sdf.sdf(points)  # [N, 1]
+
+        # 计算 GT SDF（使用 Warp）
+        with torch.no_grad():
+            gt_sdf = self._compute_gt_sdf_batch(points)  # [N]
+
+        # L1 损失
+        loss = (pred_sdf.squeeze(-1) - gt_sdf).abs().mean()
+        return loss
+
+    def _compute_gt_sdf_batch(self, points: torch.Tensor) -> torch.Tensor:
+        """使用 Warp 计算 GT SDF。
+
+        Args:
+            points: [N, 3] 或 [..., 3] 采样点坐标。
+
+        Returns:
+            sdf: [N] 或 [...] GT SDF 值。
+        """
+        original_shape = points.shape[:-1]
+        points_flat = points.view(-1, 3)
+        num_points = points_flat.shape[0]
+
+        # 准备查询点
+        points_np = points_flat.detach().cpu().numpy().astype(np.float32)
+
+        # 创建 Warp 数组
+        wp_points = wp.array(points_np, dtype=wp.vec3)
+        wp_sdf = wp.zeros(num_points, dtype=float)
+        wp_gradients = wp.zeros(num_points, dtype=wp.vec3)
+
+        # 运行 kernel
+        wp.launch(
+            kernel=compute_sdf_kernel,
+            dim=num_points,
+            inputs=[self._wp_mesh.id, wp_points, wp_sdf, wp_gradients]
+        )
+
+        # 同步并转换回 PyTorch
+        wp.synchronize()
+        sdf_np = wp_sdf.numpy()
+        sdf = torch.from_numpy(sdf_np).float().to(self.device)
+
+        # 恢复原始形状
+        sdf = sdf.view(*original_shape)
+        return sdf
+
+    def _compute_loss(self, data, mode=None):
+        """Override 父类的 _compute_loss 以添加 SDF 损失。"""
+        # 调用父类的 loss 计算
+        super()._compute_loss(data, mode)
+
+        # 添加 SDF 损失（仅在训练模式下）
+        if mode == "train" and self.sdf_loss_weight > 0 and self._wp_mesh is not None:
+            # 从渲染数据中获取采样点
+            # 使用 gradients 对应的点（这些点已经在场景内）
+            if "gradients" in data and data["gradients"] is not None:
+                gradients = data["gradients"]
+                # 获取对应的 3D 点
+                # gradients 形状: [B, R, N, 3] 或 [M, 3]
+                if gradients.dim() == 4:
+                    # 从 data 中获取采样点
+                    # 需要重新计算点的位置
+                    if "dists" in data and "outside" in data:
+                        # 使用渲染时的采样点
+                        # 这里我们采样一些随机点来计算 SDF 损失
+                        sdf_loss = self._compute_sdf_loss_from_random_samples()
+                    else:
+                        sdf_loss = torch.tensor(0.0, device=self.device)
+                else:
+                    # [M, 3] 格式（nerfacc）
+                    sdf_loss = self._compute_sdf_loss_from_random_samples()
+            else:
+                sdf_loss = self._compute_sdf_loss_from_random_samples()
+
+            self.losses["sdf"] = sdf_loss
+            self.weights["sdf"] = self.sdf_loss_weight
+
+    def _compute_sdf_loss_from_random_samples(self, num_samples: int = 4096) -> torch.Tensor:
+        """从场景中随机采样点计算 SDF 损失。
+
+        Args:
+            num_samples: 采样点数量。
+
+        Returns:
+            loss: SDF L1 损失。
+        """
+        # 获取场景边界
+        hashgrid_range = self.cfg.model.object.sdf.encoding.hashgrid.range
+        vol_min, vol_max = hashgrid_range
+
+        # 随机采样点
+        points = torch.rand(num_samples, 3, device=self.device) * (vol_max - vol_min) + vol_min
+
+        return self._compute_sdf_loss(points)
 
     def reinitialize_occupancy_grid(self, margin_voxels: float = None):
         """重新初始化 OccupancyGrid。
@@ -613,7 +754,8 @@ def create_mesh_trainer(
     mesh_file_path: str,
     device: str = 'cuda:0',
     freeze_occ_grid: bool = True,
-    occ_margin_voxels: float = 2.0
+    occ_margin_voxels: float = 2.0,
+    sdf_loss_weight: float = 1.0
 ) -> MeshTrainer:
     """创建 MeshTrainer 的便捷函数。
 
@@ -623,6 +765,7 @@ def create_mesh_trainer(
         device: 训练设备。
         freeze_occ_grid: 是否冻结 OccupancyGrid。
         occ_margin_voxels: OccupancyGrid 的 margin（以体素为单位）。
+        sdf_loss_weight: SDF 损失的初始权重（会线性衰减到 0）。
 
     Returns:
         MeshTrainer 实例。
@@ -632,5 +775,6 @@ def create_mesh_trainer(
         mesh_file_path=mesh_file_path,
         device=device,
         freeze_occ_grid=freeze_occ_grid,
-        occ_margin_voxels=occ_margin_voxels
+        occ_margin_voxels=occ_margin_voxels,
+        sdf_loss_weight=sdf_loss_weight
     )

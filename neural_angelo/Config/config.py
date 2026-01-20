@@ -173,7 +173,7 @@ class Config:
 
         # ==================== NerfAcc 加速配置 ====================
         class NerfAcc:
-            enabled: bool = False  # 是否启用 nerfacc 加速
+            enabled: bool = True  # 是否启用 nerfacc 加速
             grid_prune: bool = True  # 是否使用 OccupancyGrid 剪枝
 
             class OccGrid:
@@ -192,8 +192,6 @@ class Config:
             far_plane: float = 1e10  # 远平面
 
         nerfacc = NerfAcc()
-
-        radius: float = 1.0  # 场景半径（用于 AABB）
 
         class AppearEmbed:
             enabled: bool = False

@@ -11,6 +11,16 @@ import torch.nn.functional as F
 from nerfacc import OccGridEstimator, render_weight_from_alpha, accumulate_along_rays
 
 
+__all__ = [
+    'NerfAccEstimator',
+    'compute_neus_alpha_nerfacc',
+    'render_with_nerfacc',
+    'get_aabb_from_radius',
+    'get_aabb_from_hashgrid_range',
+    'estimate_render_step_size',
+]
+
+
 class NerfAccEstimator(nn.Module):
     """NerfAcc OccupancyGrid 估计器包装类
     
@@ -234,6 +244,28 @@ def get_aabb_from_radius(radius, center=None):
     aabb = torch.tensor([
         center[0] - radius, center[1] - radius, center[2] - radius,
         center[0] + radius, center[1] + radius, center[2] + radius
+    ], dtype=torch.float32)
+    
+    return aabb
+
+
+def get_aabb_from_hashgrid_range(hashgrid_range):
+    """从 hashgrid.range 生成 AABB
+    
+    这是推荐的方式，确保 NerfAcc OccupancyGrid 与 HashGrid 使用相同的空间范围。
+    
+    Args:
+        hashgrid_range: [min, max] 列表，例如 [-0.55, 0.55]
+        
+    Returns:
+        aabb: [6] tensor [x_min, y_min, z_min, x_max, y_max, z_max]
+    """
+    min_val = hashgrid_range[0]
+    max_val = hashgrid_range[1]
+    
+    aabb = torch.tensor([
+        min_val, min_val, min_val,  # x_min, y_min, z_min
+        max_val, max_val, max_val   # x_max, y_max, z_max
     ], dtype=torch.float32)
     
     return aabb

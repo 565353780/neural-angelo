@@ -24,7 +24,7 @@ class MeshImageDataset(BaseDataset):
         self.preload = cfg_data.preload
 
         # 从 camera.pkl 加载相机和图像数据
-        camera_pkl_file_path = self.root + '../camera.pkl'
+        camera_pkl_file_path = self.root + '../camera_cpu.pkl'
         assert os.path.exists(camera_pkl_file_path), f"camera.pkl not found at {camera_pkl_file_path}"
         with open(camera_pkl_file_path, 'rb') as f:
             self.camera_list = pickle.load(f)

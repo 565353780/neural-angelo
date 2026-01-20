@@ -10,7 +10,7 @@ from neural_angelo.Util import nerf_misc as misc
 from neural_angelo.Util.nerfacc_util import (
     NerfAccEstimator,
     compute_neus_alpha_nerfacc, render_with_nerfacc,
-    get_aabb_from_radius, estimate_render_step_size
+    get_aabb_from_radius, get_aabb_from_hashgrid_range, estimate_render_step_size
 )
 
 from neural_angelo.Model.neural_sdf import NeuralSDF
@@ -30,7 +30,7 @@ class Model(torch.nn.Module):
         self.outside_val = 1000. * (-1 if cfg_model.object.sdf.mlp.inside_out else 1)
 
         # 从 camera.pkl 加载相机和图像数据
-        camera_pkl_file_path = cfg_data.root + '../camera.pkl'
+        camera_pkl_file_path = cfg_data.root + '../camera_cpu.pkl'
         assert os.path.exists(camera_pkl_file_path), f"camera.pkl not found at {camera_pkl_file_path}"
         with open(camera_pkl_file_path, 'rb') as f:
             self.camera_list = pickle.load(f)
@@ -66,13 +66,15 @@ class Model(torch.nn.Module):
         """构建 nerfacc 加速结构"""
         print("Initializing NerfAcc acceleration...")
         
-        # 获取场景半径
-        radius = getattr(cfg_model, 'radius', 1.0)
-        self.radius = radius
-        
-        # 计算 AABB
-        aabb = get_aabb_from_radius(radius)
+        # 使用 hashgrid.range 计算 AABB（确保与 HashGrid 空间范围一致）
+        hashgrid_range = cfg_model.object.sdf.encoding.hashgrid.range
+        aabb = get_aabb_from_hashgrid_range(hashgrid_range)
         self.register_buffer('scene_aabb', aabb)
+        
+        # 计算等效半径（用于步长估计等）
+        self.radius = hashgrid_range[1]  # 使用 max 值作为半径
+        
+        print(f"  Using hashgrid.range {hashgrid_range} for AABB: {aabb.tolist()}")
         
         # 计算渲染步长
         num_samples = cfg_model.render.num_samples.coarse + \
@@ -80,22 +82,22 @@ class Model(torch.nn.Module):
         if cfg_model.nerfacc.render_step_size is not None:
             self.render_step_size = cfg_model.nerfacc.render_step_size
         else:
-            self.render_step_size = estimate_render_step_size(radius, num_samples)
-        
+            self.render_step_size = estimate_render_step_size(self.radius, num_samples)
+
         # 创建 OccupancyGrid 估计器
         if cfg_model.nerfacc.grid_prune:
             self.estimator = NerfAccEstimator(
                 aabb=aabb,
                 resolution=cfg_model.nerfacc.occ_grid.resolution,
             )
-            
+
             # 背景 OccupancyGrid
             if cfg_model.background.enabled:
                 self.estimator_bg = NerfAccEstimator(
                     aabb=aabb,
                     resolution=cfg_model.nerfacc.occ_grid.resolution_bg,
                 )
-        
+
         self.use_nerfacc = True
         self.nerfacc_cfg = cfg_model.nerfacc
         print(f"NerfAcc initialized with step_size={self.render_step_size:.6f}, "

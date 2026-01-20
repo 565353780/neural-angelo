@@ -24,10 +24,13 @@ def demo():
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
     gen_mesh_file_path = data_folder + "stage2_192_n_d2_d4_d8_d16.ply"
 
-    checkpoint = data_folder + "na/logs/model_last.pt"
+    checkpoint = data_folder + "na/logs/model_last_backup.pt"
+    #checkpoint = data_folder + "na/logs/model_last.pt"
+    checkpoint = None
 
     cfg = Config()
-    device = 'cuda:1'
+    device = 'cuda:0'
+    extract_mesh_only = False
 
     # 设置日志目录
     cfg.logdir = data_folder + "na/logs/"
@@ -48,28 +51,32 @@ def demo():
 
     # 初始化训练器
     print("初始化训练器...")
-    trainer = MeshTrainer(cfg, device)
+    trainer = MeshTrainer(cfg, gen_mesh_file_path, device)
 
     # 加载检查点（如果提供了路径且文件有效，自动恢复训练）
-    # print("加载检查点...")
-    # trainer.checkpointer.load(checkpoint)
+    print("加载检查点...")
+    trainer.checkpointer.load(checkpoint)
 
-    # 开始训练
-    print("\n" + "=" * 60)
-    print("开始训练...")
-    print("=" * 60 + "\n")
+    if not extract_mesh_only:
+        # 开始训练
+        print("\n" + "=" * 60)
+        print("开始训练...")
+        print("=" * 60 + "\n")
 
-    trainer.fitMeshFileAll(
-        mesh_file_path=gen_mesh_file_path,
-        sdf_sample_point_num=2048,
-        sdf_lr=1e-3,
-        sdf_patience=50,
+        trainer.train()
+        trainer.finalize()
+
+    # 导出基本网格
+    trainer.exportMeshFile(cfg.logdir + "mesh.ply")
+
+    # 导出高分辨率带纹理的网格，只保留最大连通分量
+    trainer.exportMeshFile(
+        cfg.logdir + "mesh_textured.ply",
+        resolution=1024,
+        block_res=128,
+        textured=True,
+        keep_lcc=False,
     )
-
-    # trainer.train()
-
-    # 结束训练
-    trainer.finalize()
 
     print("\n" + "=" * 60)
     print("训练完成!")

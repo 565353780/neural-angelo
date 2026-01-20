@@ -143,6 +143,9 @@ class Trainer(object):
         self.eval_data_loader = get_val_dataloader(self.cfg)
 
         self.init_tensorboard(self.cfg.logdir)
+
+        # tmp
+        self.is_gt_logged = False
         return
 
     def setup_model(self):
@@ -581,7 +584,10 @@ class Trainer(object):
             return
         if mode == "val":
             images_error = (data["rgb_map"] - data["image"]).abs()
-            self.tensorboard_writer.add_image(f"{mode}/vis/rgb_target", tensorboard_image(data["image"]), self.current_iteration)
+            if not self.is_gt_logged:
+                self.tensorboard_writer.add_image(f"{mode}/vis/rgb_target", tensorboard_image(data["image"]), self.current_iteration)
+                self.is_gt_logged = True
+
             self.tensorboard_writer.add_image(f"{mode}/vis/rgb_render", tensorboard_image(data["rgb_map"]), self.current_iteration)
             self.tensorboard_writer.add_image(f"{mode}/vis/rgb_error", tensorboard_image(images_error), self.current_iteration)
             self.tensorboard_writer.add_image(f"{mode}/vis/normal", tensorboard_image(data["normal_map"], from_range=(-1, 1)), self.current_iteration)

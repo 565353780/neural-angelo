@@ -78,7 +78,7 @@ class Config:
                         max_logres: int = 11
                         dict_size: int = 22
                         dim: int = 8
-                        range: list = [-2, 2]
+                        range: list = [-0.55, 0.55]
 
                     hashgrid = Hashgrid()
 
@@ -171,6 +171,30 @@ class Config:
 
         render = Render()
 
+        # ==================== NerfAcc 加速配置 ====================
+        class NerfAcc:
+            enabled: bool = False  # 是否启用 nerfacc 加速
+            grid_prune: bool = True  # 是否使用 OccupancyGrid 剪枝
+
+            class OccGrid:
+                resolution: int = 128  # 前景 OccupancyGrid 分辨率
+                resolution_bg: int = 64  # 背景 OccupancyGrid 分辨率
+                update_interval: int = 16  # 更新间隔（迭代次数）
+                warmup_steps: int = 256  # 预热步数
+                occ_thre: float = 0.01  # 占据阈值
+
+            occ_grid = OccGrid()
+
+            # 射线采样参数
+            render_step_size: float = None  # 如果为 None，则自动计算
+            alpha_thre: float = 0.0  # alpha 阈值
+            near_plane: float = 0.0  # 近平面
+            far_plane: float = 1e10  # 远平面
+
+        nerfacc = NerfAcc()
+
+        radius: float = 1.0  # 场景半径（用于 AABB）
+
         class AppearEmbed:
             enabled: bool = False
             dim: int = 8
@@ -184,19 +208,19 @@ class Config:
         class Params:
             lr: float = 1e-3
             weight_decay: float = 1e-2
-
+        
         params = Params()
-
+        
         class Sched:
             iteration_mode: bool = True
             warm_up_end: int = 5000
             two_steps: list = [300000, 400000]
             gamma: float = 10.0
-
+        
         sched = Sched()
-
+    
     optim = Optim()
-
+    
     # ==================== 数据配置 ====================
     class Data:
         name: str = "dummy"  # 数据集名称
@@ -273,4 +297,4 @@ class Config:
     
     def __repr__(self):
         """返回配置的字符串表示"""
-        return f"Config(data.root={self.data.root}, max_iter={self.max_iter})"
+        return f"Config(data.root={self.data.root}, max_epoch={self.max_epoch})"

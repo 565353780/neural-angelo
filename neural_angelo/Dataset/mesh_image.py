@@ -148,6 +148,7 @@ class MeshImageDataset(BaseDataset):
         # 转换 OpenGL 坐标系到 CV 坐标系
         c2w = self._gl_to_cv(cam.camera2world)
 
+        '''
         # 场景归一化：中心化
         center = self.sphere_center.copy()
         center += np.array(getattr(self.readjust, "center", [0])) if self.readjust else 0.
@@ -157,6 +158,7 @@ class MeshImageDataset(BaseDataset):
         scale = self.sphere_radius
         scale *= getattr(self.readjust, "scale", 1.) if self.readjust else 1.
         c2w[:3, -1] /= scale
+        '''
 
         # 计算 w2c (world to camera)
         w2c = camera.Pose().invert(c2w[:3])

@@ -27,6 +27,8 @@ def demo():
     data_folder = home + "/chLi/Dataset/pixel_align/" + shape_id + "/"
 
     checkpoint = data_folder + "na/logs/model_last_backup.pt"
+    #checkpoint = data_folder + "na/logs/model_last.pt"
+    #checkpoint = None
 
     cfg = Config()
     device = 'cuda:2'

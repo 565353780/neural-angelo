@@ -10,7 +10,7 @@ from neural_angelo.Util import nerf_misc as misc
 from neural_angelo.Util.nerfacc_util import (
     NerfAccEstimator,
     compute_neus_alpha_nerfacc, render_with_nerfacc,
-    get_aabb_from_radius, get_aabb_from_hashgrid_range, estimate_render_step_size
+    get_aabb_from_hashgrid_range, estimate_render_step_size
 )
 
 from neural_angelo.Model.neural_sdf import NeuralSDF

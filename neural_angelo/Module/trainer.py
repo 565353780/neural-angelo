@@ -343,7 +343,7 @@ class Trainer(object):
 
         model.neural_sdf.set_normal_epsilon()
         self.get_curvature_weight(current_iteration, self.cfg.trainer.loss_weight.curvature)
-        
+
         # 更新 nerfacc OccupancyGrid (仅在训练模式下)
         if hasattr(model, 'update_occupancy_grid') and model.training:
             model.update_occupancy_grid(current_iteration)
